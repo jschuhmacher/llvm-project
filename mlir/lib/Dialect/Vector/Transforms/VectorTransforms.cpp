@@ -382,10 +382,14 @@ FailureOr<Value> combineContractAndBroadcast(vector::ContractionOp contractOp,
   for (unsigned i = 0; i < iterators.size(); ++i) {
     if (!isReductionIterator(iterators[i]))
       continue;
-    if (getResultIndex(maps[0], i) && getResultIndex(maps[1], i)) {
+
+    bool hasLhsDim = getResultIndex(maps[0], i).has_value();
+    bool hasRhsDim = getResultIndex(maps[1], i).has_value();
+    // Folding must preserve every paired reduction dimension.
+    if (hasLhsDim != hasRhsDim)
+      return failure();
+    if (hasLhsDim)
       hasReductionIteratorApplyingOnBothSides = true;
-      break;
-    }
   }
   if (!hasReductionIteratorApplyingOnBothSides)
     return failure();
