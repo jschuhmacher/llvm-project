@@ -836,76 +836,36 @@ func.func @atan_scalar(%arg0: f32) -> f32 {
 }
 
 
-// CHECK-LABEL: @atan2_scalar
-// CHECK-SAME:      %[[VAL_0:.*]]: f16,
-// CHECK-SAME:      %[[VAL_1:.*]]: f16)
-// CHECK-DAG:       %[[VAL_2:.*]] = arith.constant 1.000000e+00 : f32
-// CHECK-DAG:       %[[VAL_3:.*]] = arith.constant 6.600000e-01 : f32
-// CHECK-DAG:       %[[VAL_4:.*]] = arith.constant 2.41421366 : f32
-// CHECK-DAG:       %[[VAL_5:.*]] = arith.constant -0.875060856 : f32
-// CHECK-DAG:       %[[VAL_6:.*]] = arith.constant -16.1575375 : f32
-// CHECK-DAG:       %[[VAL_7:.*]] = arith.constant -75.0085601 : f32
-// CHECK-DAG:       %[[VAL_8:.*]] = arith.constant -122.886665 : f32
-// CHECK-DAG:       %[[VAL_9:.*]] = arith.constant -64.8502197 : f32
-// CHECK-DAG:       %[[VAL_10:.*]] = arith.constant 24.8584652 : f32
-// CHECK-DAG:       %[[VAL_11:.*]] = arith.constant 165.027008 : f32
-// CHECK-DAG:       %[[VAL_12:.*]] = arith.constant 432.881073 : f32
-// CHECK-DAG:       %[[VAL_13:.*]] = arith.constant 485.390411 : f32
-// CHECK-DAG:       %[[VAL_14:.*]] = arith.constant 194.550659 : f32
-// CHECK-DAG:       %[[VAL_15:.*]] = arith.constant 0.785398185 : f32
-// CHECK-DAG:       %[[VAL_16:.*]] = arith.constant 1.57079637 : f32
-// CHECK-DAG:       %[[VAL_17:.*]] = arith.constant 0.000000e+00 : f32
-// CHECK-DAG:       %[[VAL_18:.*]] = arith.constant 3.14159274 : f32
-// CHECK-DAG:       %[[VAL_19:.*]] = arith.constant -1.57079637 : f32
-// CHECK-DAG:       %[[VAL_20:.*]] = arith.constant 0x7FC00000 : f32
-// CHECK-DAG:       %[[VAL_21:.*]] = arith.extf %[[VAL_0]] : f16 to f32
-// CHECK-DAG:       %[[VAL_22:.*]] = arith.extf %[[VAL_1]] : f16 to f32
-// CHECK-DAG:       %[[VAL_23:.*]] = arith.divf %[[VAL_21]], %[[VAL_22]] : f32
-// CHECK-DAG:       %[[VAL_24:.*]] = math.absf %[[VAL_23]] : f32
-// CHECK-DAG:       %[[VAL_25:.*]] = arith.cmpf ogt, %[[VAL_24]], %[[VAL_3]] : f32
-// CHECK-DAG:       %[[VAL_26:.*]] = arith.addf %[[VAL_24]], %[[VAL_2]] : f32
-// CHECK-DAG:       %[[VAL_27:.*]] = arith.subf %[[VAL_24]], %[[VAL_2]] : f32
-// CHECK-DAG:       %[[VAL_28:.*]] = arith.select %[[VAL_25]], %[[VAL_27]], %[[VAL_24]] : f32
-// CHECK-DAG:       %[[VAL_29:.*]] = arith.select %[[VAL_25]], %[[VAL_26]], %[[VAL_2]] : f32
-// CHECK-DAG:       %[[VAL_30:.*]] = arith.cmpf ogt, %[[VAL_24]], %[[VAL_4]] : f32
-// CHECK-DAG:       %[[VAL_31:.*]] = arith.select %[[VAL_30]], %[[VAL_2]], %[[VAL_28]] : f32
-// CHECK-DAG:       %[[VAL_32:.*]] = arith.select %[[VAL_30]], %[[VAL_24]], %[[VAL_29]] : f32
-// CHECK-DAG:       %[[VAL_33:.*]] = arith.divf %[[VAL_31]], %[[VAL_32]] : f32
-// CHECK-DAG:       %[[VAL_34:.*]] = arith.mulf %[[VAL_33]], %[[VAL_33]] : f32
-// CHECK-DAG:       %[[VAL_35:.*]] = math.fma %[[VAL_34]], %[[VAL_5]], %[[VAL_6]] : f32
-// CHECK-DAG:       %[[VAL_36:.*]] = math.fma %[[VAL_34]], %[[VAL_35]], %[[VAL_7]] : f32
-// CHECK-DAG:       %[[VAL_37:.*]] = math.fma %[[VAL_34]], %[[VAL_36]], %[[VAL_8]] : f32
-// CHECK-DAG:       %[[VAL_38:.*]] = math.fma %[[VAL_34]], %[[VAL_37]], %[[VAL_9]] : f32
-// CHECK-DAG:       %[[VAL_39:.*]] = arith.mulf %[[VAL_38]], %[[VAL_34]] : f32
-// CHECK-DAG:       %[[VAL_40:.*]] = math.fma %[[VAL_34]], %[[VAL_10]], %[[VAL_11]] : f32
-// CHECK-DAG:       %[[VAL_41:.*]] = math.fma %[[VAL_34]], %[[VAL_40]], %[[VAL_12]] : f32
-// CHECK-DAG:       %[[VAL_42:.*]] = math.fma %[[VAL_34]], %[[VAL_41]], %[[VAL_13]] : f32
-// CHECK-DAG:       %[[VAL_43:.*]] = math.fma %[[VAL_34]], %[[VAL_42]], %[[VAL_14]] : f32
-// CHECK-DAG:       %[[VAL_44:.*]] = arith.divf %[[VAL_39]], %[[VAL_43]] : f32
-// CHECK-DAG:       %[[VAL_45:.*]] = math.fma %[[VAL_44]], %[[VAL_33]], %[[VAL_33]] : f32
-// CHECK-DAG:       %[[VAL_46:.*]] = arith.addf %[[VAL_45]], %[[VAL_15]] : f32
-// CHECK-DAG:       %[[VAL_47:.*]] = arith.select %[[VAL_25]], %[[VAL_46]], %[[VAL_45]] : f32
-// CHECK-DAG:       %[[VAL_48:.*]] = arith.subf %[[VAL_16]], %[[VAL_45]] : f32
-// CHECK-DAG:       %[[VAL_49:.*]] = arith.select %[[VAL_30]], %[[VAL_48]], %[[VAL_47]] : f32
-// CHECK-DAG:       %[[VAL_50:.*]] = math.copysign %[[VAL_49]], %[[VAL_23]] : f32
-// CHECK-DAG:       %[[VAL_51:.*]] = arith.addf %[[VAL_50]], %[[VAL_18]] : f32
-// CHECK-DAG:       %[[VAL_52:.*]] = arith.subf %[[VAL_50]], %[[VAL_18]] : f32
-// CHECK-DAG:       %[[VAL_53:.*]] = arith.cmpf ogt, %[[VAL_50]], %[[VAL_17]] : f32
-// CHECK-DAG:       %[[VAL_54:.*]] = arith.select %[[VAL_53]], %[[VAL_52]], %[[VAL_51]] : f32
-// CHECK-DAG:       %[[VAL_55:.*]] = arith.cmpf ogt, %[[VAL_22]], %[[VAL_17]] : f32
-// CHECK-DAG:       %[[VAL_56:.*]] = arith.select %[[VAL_55]], %[[VAL_50]], %[[VAL_54]] : f32
-// CHECK-DAG:       %[[VAL_57:.*]] = arith.cmpf oeq, %[[VAL_22]], %[[VAL_17]] : f32
-// CHECK-DAG:       %[[VAL_58:.*]] = arith.cmpf ogt, %[[VAL_21]], %[[VAL_17]] : f32
-// CHECK-DAG:       %[[VAL_59:.*]] = arith.andi %[[VAL_57]], %[[VAL_58]] : i1
-// CHECK-DAG:       %[[VAL_60:.*]] = arith.select %[[VAL_59]], %[[VAL_16]], %[[VAL_56]] : f32
-// CHECK-DAG:       %[[VAL_61:.*]] = arith.cmpf olt, %[[VAL_21]], %[[VAL_17]] : f32
-// CHECK-DAG:       %[[VAL_62:.*]] = arith.andi %[[VAL_57]], %[[VAL_61]] : i1
-// CHECK-DAG:       %[[VAL_63:.*]] = arith.select %[[VAL_62]], %[[VAL_19]], %[[VAL_60]] : f32
-// CHECK-DAG:       %[[VAL_64:.*]] = arith.cmpf oeq, %[[VAL_21]], %[[VAL_17]] : f32
-// CHECK-DAG:       %[[VAL_65:.*]] = arith.andi %[[VAL_57]], %[[VAL_64]] : i1
-// CHECK-DAG:       %[[VAL_66:.*]] = arith.select %[[VAL_65]], %[[VAL_20]], %[[VAL_63]] : f32
-// CHECK-DAG:       %[[VAL_67:.*]] = arith.truncf %[[VAL_66]] : f32 to f16
-// CHECK:           return %[[VAL_67]] : f1
+// The angle of (|x|, |y|) is reflected for a negative x and takes the sign of
+// y; two zeros give 0 and two infinities pi/4.
+// CHECK-LABEL:   func @atan2_scalar(
+// CHECK-SAME:      %[[Y:.*]]: f16, %[[X:.*]]: f16) -> f16
+// CHECK-DAG:       %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK-DAG:       %[[ONE:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK-DAG:       %[[PI:.*]] = arith.constant 3.14159274 : f32
+// CHECK-DAG:       %[[QUARTER_PI:.*]] = arith.constant 0.785398185 : f32
+// CHECK-DAG:       %[[INF:.*]] = arith.constant 0x7F800000 : f32
+// CHECK:           %[[Y32:.*]] = arith.extf %[[Y]] : f16 to f32
+// CHECK:           %[[X32:.*]] = arith.extf %[[X]] : f16 to f32
+// CHECK:           %[[ABS_X:.*]] = math.absf %[[X32]] : f32
+// CHECK:           %[[ABS_Y:.*]] = math.absf %[[Y32]] : f32
+// CHECK:           %[[RATIO:.*]] = arith.divf %[[ABS_Y]], %[[ABS_X]] : f32
+// CHECK:           %[[ATAN:.*]] = math.copysign %{{.*}}, %[[RATIO]] : f32
+// CHECK:           %[[X_ZERO:.*]] = arith.cmpf oeq, %[[ABS_X]], %[[ZERO]] : f32
+// CHECK:           %[[Y_ZERO:.*]] = arith.cmpf oeq, %[[ABS_Y]], %[[ZERO]] : f32
+// CHECK:           %[[BOTH_ZERO:.*]] = arith.andi %[[X_ZERO]], %[[Y_ZERO]] : i1
+// CHECK:           %[[ANGLE0:.*]] = arith.select %[[BOTH_ZERO]], %[[ZERO]], %[[ATAN]] : f32
+// CHECK:           %[[X_INF:.*]] = arith.cmpf oeq, %[[ABS_X]], %[[INF]] : f32
+// CHECK:           %[[Y_INF:.*]] = arith.cmpf oeq, %[[ABS_Y]], %[[INF]] : f32
+// CHECK:           %[[BOTH_INF:.*]] = arith.andi %[[X_INF]], %[[Y_INF]] : i1
+// CHECK:           %[[ANGLE1:.*]] = arith.select %[[BOTH_INF]], %[[QUARTER_PI]], %[[ANGLE0]] : f32
+// CHECK:           %[[X_SIGN:.*]] = math.copysign %[[ONE]], %[[X32]] : f32
+// CHECK:           %[[X_NEG:.*]] = arith.cmpf olt, %[[X_SIGN]], %[[ZERO]] : f32
+// CHECK:           %[[REFLECTED:.*]] = arith.subf %[[PI]], %[[ANGLE1]] : f32
+// CHECK:           %[[ANGLE2:.*]] = arith.select %[[X_NEG]], %[[REFLECTED]], %[[ANGLE1]] : f32
+// CHECK:           %[[RESULT:.*]] = math.copysign %[[ANGLE2]], %[[Y32]] : f32
+// CHECK:           %[[TRUNC:.*]] = arith.truncf %[[RESULT]] : f32 to f16
+// CHECK:           return %[[TRUNC]] : f16
 func.func @atan2_scalar(%arg0: f16, %arg1: f16) -> f16 {
   %0 = math.atan2 %arg0, %arg1 : f16
   return %0 : f16
@@ -914,6 +874,7 @@ func.func @atan2_scalar(%arg0: f16, %arg1: f16) -> f16 {
 // CHECK-LABEL: @cbrt_vector
 // CHECK-SAME: %[[ARG0:.+]]: vector<4xf32>
 
+// CHECK: %[[INF_FP:.+]] = arith.constant dense<0x7F800000> : vector<4xf32>
 // CHECK: %[[TWO_INT:.+]] = arith.constant dense<2>
 // CHECK: %[[FOUR_INT:.+]] = arith.constant dense<4>
 // CHECK: %[[EIGHT_INT:.+]] = arith.constant dense<8>
@@ -950,9 +911,11 @@ func.func @atan2_scalar(%arg0: f16, %arg1: f16) -> f16 {
 // CHECK: %[[ADD:.+]] = arith.addf %[[DOUBLE]], %[[DIV]]
 // CHECK: %[[APPROX4:.+]] = arith.mulf %[[ADD]], %[[THIRD_FP]]
 
-// Check for zero special case and copy the sign:
-// CHECK: %[[CMP:.+]] = arith.cmpf oeq, %[[ABS]], %[[ZERO_FP]]
-// CHECK: %[[SEL:.+]] = arith.select %[[CMP]], %[[ZERO_FP]], %[[APPROX4]]
+// Zeros and infinities are their own cube roots; then copy the sign:
+// CHECK: %[[IS_ZERO:.+]] = arith.cmpf oeq, %[[ABS]], %[[ZERO_FP]]
+// CHECK: %[[IS_INF:.+]] = arith.cmpf oeq, %[[ABS]], %[[INF_FP]]
+// CHECK: %[[KEEP:.+]] = arith.ori %[[IS_ZERO]], %[[IS_INF]]
+// CHECK: %[[SEL:.+]] = arith.select %[[KEEP]], %[[ABS]], %[[APPROX4]]
 // CHECK: %[[SIGN:.+]] = math.copysign %[[SEL]], %[[ARG0]]
 // CHECK: return %[[SIGN]]
 
@@ -1051,4 +1014,15 @@ func.func @rsqrt_f16(%arg0 : vector<2x8xf16>) -> vector<2x8xf16> {
   // AVX2-NOT: math.rsqrt
   %0 = "math.rsqrt"(%arg0) : (vector<2x8xf16>) -> vector<2x8xf16>
   return %0 : vector<2x8xf16>
+}
+
+// The range reduction turns -0 into +0, so sin returns a zero argument itself.
+// CHECK-LABEL: func @sin_keeps_zero_sign(
+// CHECK-SAME:    %[[X:.*]]: f32) -> f32
+// CHECK:         %[[IS_ZERO:.*]] = arith.cmpf oeq, %[[X]], %{{.*}} : f32
+// CHECK:         %[[RESULT:.*]] = arith.select %[[IS_ZERO]], %[[X]], %{{.*}} : f32
+// CHECK:         return %[[RESULT]] : f32
+func.func @sin_keeps_zero_sign(%arg0: f32) -> f32 {
+  %0 = math.sin %arg0 : f32
+  return %0 : f32
 }
