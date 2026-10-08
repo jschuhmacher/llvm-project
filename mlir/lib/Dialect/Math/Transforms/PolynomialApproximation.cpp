@@ -1677,10 +1677,16 @@ CbrtApproximation::matchAndRewrite(math::CbrtOp op,
   floatValue = arith::AddFOp::create(b, mulTwo, divSquared);
   floatValue = arith::MulFOp::create(b, floatValue, fpThird);
 
-  // Check for zero and restore sign.
+  // Zeros and infinities are their own cube roots; the Newton steps would
+  // divide inf by inf. Then restore the sign.
+  Value fpInf =
+      bconst(b.getF32FloatAttr(std::numeric_limits<float>::infinity()));
   Value isZero =
       arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, absValue, fpZero);
-  floatValue = arith::SelectOp::create(b, isZero, fpZero, floatValue);
+  Value isInf =
+      arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, absValue, fpInf);
+  floatValue = arith::SelectOp::create(
+      b, arith::OrIOp::create(b, isZero, isInf), absValue, floatValue);
   floatValue = math::CopySignOp::create(b, floatValue, operand);
 
   rewriter.replaceOp(op, floatValue);
