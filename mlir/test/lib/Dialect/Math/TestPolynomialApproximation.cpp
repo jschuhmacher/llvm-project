@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorDialect.h"
 #include "mlir/Dialect/X86/X86Dialect.h"
 #include "mlir/Pass/Pass.h"
@@ -34,7 +35,7 @@ struct TestMathPolynomialApproximationPass
 
   void runOnOperation() override;
   void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<arith::ArithDialect, math::MathDialect,
+    registry.insert<arith::ArithDialect, math::MathDialect, scf::SCFDialect,
                     vector::VectorDialect>();
     if (enableAvx2)
       registry.insert<x86::X86Dialect>();

@@ -8,6 +8,7 @@ add_mlir_library(MLIRMathTestPasses
 mlir_target_link_libraries(MLIRMathTestPasses PUBLIC
   MLIRMathTransforms
   MLIRPass
+  MLIRSCFDialect
   MLIRTransformUtils
   MLIRVectorDialect
   MLIRX86Dialect

@@ -483,7 +483,7 @@ func.func @sin() {
   %pi_3_over_2 = arith.constant 4.71238898038 : f32
   call @sin_f32(%pi_3_over_2) : (f32) -> ()
 
-  // CHECK: 0, 0.866025, -1
+  // CHECK: -2.38498e-08, 0.866025, -1
   %vec_x = arith.constant dense<[9.42477796077, 2.09439510239, -1.57079632679]> : vector<3xf32>
   call @sin_3xf32(%vec_x) : (vector<3xf32>) -> ()
 
@@ -526,7 +526,7 @@ func.func @cos() {
   %pi_3_over_2 = arith.constant 4.71238898038 : f32
   call @cos_f32(%pi_3_over_2) : (f32) -> ()
 
-  // CHECK: -1, -0.5, 0
+  // CHECK: -1, -0.5, -4.37114e-08
   %vec_x = arith.constant dense<[9.42477796077, 2.09439510239, -1.57079632679]> : vector<3xf32>
   call @cos_3xf32(%vec_x) : (vector<3xf32>) -> ()
 

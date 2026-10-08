@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Math/Transforms/Approximation.h"
 #include "mlir/Dialect/Math/Transforms/Passes.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/IndexingUtils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Vector/Utils/VectorUtils.h"
@@ -1466,14 +1467,102 @@ public:
 };
 } // namespace
 
-#define TWO_OVER_PI                                                            \
-  0.6366197723675813430755350534900574481378385829618257949906693762L
-#define PI_OVER_2                                                              \
-  1.5707963267948966192313216916397514420985846996875529104874722961L
+// Reduces |x| >= 2^16 to r = |x| - q * pi/2 with |r| <= pi/4 by Payne-Hanek,
+// returning r and q. Multiplies the mantissa by the 96 bits of 2/pi that
+// survive modulo 4, in 2.62-bit fixed point, after Eigen's trig_reduce_huge.
+static std::pair<Value, Value>
+reduceHugeAngle(ImplicitLocOpBuilder &builder, Value absX,
+                std::optional<VectorShape> shape) {
+  Type i32Type = broadcast(builder.getI32Type(), shape);
+  Type i64Type = broadcast(builder.getI64Type(), shape);
+  auto i32 = [&](int32_t value) {
+    return broadcast(builder, i32Cst(builder, value), shape);
+  };
+  auto i64 = [&](uint64_t value) {
+    return broadcast(
+        builder,
+        arith::ConstantOp::create(builder, builder.getI64IntegerAttr(value)),
+        shape);
+  };
+  auto f32 = [&](float value) {
+    return broadcast(builder, f32Cst(builder, value), shape);
+  };
+  auto shl = [&](Value a, Value b) {
+    return arith::ShLIOp::create(builder, a, b);
+  };
+  auto shr = [&](Value a, Value b) {
+    return arith::ShRUIOp::create(builder, a, b);
+  };
+  auto add = [&](Value a, Value b) {
+    return arith::AddIOp::create(builder, a, b);
+  };
+  auto mul = [&](Value a, Value b) {
+    return arith::MulIOp::create(builder, a, b);
+  };
 
-// Approximates sin(x) or cos(x) by finding the best approximation polynomial in
-// the reduced range [0, pi/2] for both sin(x) and cos(x). Then given y in the
-// reduced range sin(x) will be computed as sin(y), -sin(y), cos(y) or -cos(y).
+  // Aligning the mantissa to 8 bits aligns the bits of 2/pi it needs.
+  Value bits = arith::BitcastOp::create(builder, i32Type, absX);
+  Value e = arith::SubIOp::create(builder, shr(bits, i32(23)), i32(118));
+  Value mantissa = arith::OrIOp::create(
+      builder, arith::AndIOp::create(builder, bits, i32(0x007fffff)),
+      i32(0x00800000));
+  mantissa = shl(mantissa, arith::AndIOp::create(builder, e, i32(7)));
+  Value byteOffset = shl(shr(e, i32(3)), i32(3));
+
+  // The fraction of 2/pi, shifted right by 2 bits, after 64 zero bits.
+  const uint64_t twoOverPi[] = {0, 0x28be60db9391054aull, 0x7f09d5f47d4d3770ull,
+                                0x36d8a5664f10e410ull, 0};
+  // Returns the 64 bits of 2/pi starting `offset` bits into the fraction.
+  auto window = [&](Value offset) -> Value {
+    Value start =
+        arith::ExtUIOp::create(builder, i64Type, add(offset, i32(64)));
+    Value word = shr(start, i64(6));
+    Value shift = arith::AndIOp::create(builder, start, i64(63));
+    Value high = i64(twoOverPi[4]), low = i64(twoOverPi[4]);
+    for (uint64_t index : {3, 2, 1, 0}) {
+      Value isWord = arith::CmpIOp::create(builder, arith::CmpIPredicate::eq,
+                                           word, i64(index));
+      high =
+          arith::SelectOp::create(builder, isWord, i64(twoOverPi[index]), high);
+      low = arith::SelectOp::create(builder, isWord, i64(twoOverPi[index + 1]),
+                                    low);
+    }
+    // Two shifts keep a zero shift of `high` from shifting `low` by 64.
+    Value lowBits =
+        shr(shr(low, i64(1)), arith::SubIOp::create(builder, i64(63), shift));
+    return arith::OrIOp::create(builder, shl(high, shift), lowBits);
+  };
+  Value lowWords = window(byteOffset);
+  Value highWord =
+      shr(window(arith::SubIOp::create(builder, byteOffset, i32(32))), i64(32));
+
+  // p = mantissa * 2/pi modulo 4, in 2.62-bit fixed point.
+  Value m = arith::ExtUIOp::create(builder, i64Type, mantissa);
+  Value p = mul(m, arith::AndIOp::create(builder, lowWords, i64(0xffffffff)));
+  p = add(mul(m, shr(lowWords, i64(32))), shr(p, i64(32)));
+  p = add(shl(mul(m, highWord), i64(32)), p);
+  Value q = shr(add(p, i64(1ull << 61)), i64(62));
+  p = arith::SubIOp::create(builder, p, shl(q, i64(62)));
+
+  // r = p * pi/2 * 2^-62; splitting p and the constant keeps r exact to f32.
+  Value pHigh = arith::SIToFPOp::create(builder, absX.getType(), p);
+  Value pLow = arith::SIToFPOp::create(
+      builder, absX.getType(),
+      arith::SubIOp::create(builder, p,
+                            arith::FPToSIOp::create(builder, i64Type, pHigh)));
+  Value scaleHigh = f32(3.40612158e-19f);
+  Value scaleLow = f32(-9.47839642e-27f);
+  Value r =
+      math::FmaOp::create(builder, pLow, scaleHigh,
+                          arith::MulFOp::create(builder, pHigh, scaleLow));
+  r = math::FmaOp::create(builder, pHigh, scaleHigh, r);
+  return {r, arith::TruncIOp::create(builder, i32Type, q)};
+}
+
+// Approximates sin(x) or cos(x) after Eigen's psincos_float: reduces x to
+// r = |x| - q * pi/2 with |r| <= pi/4, then evaluates the sin or cos
+// polynomial on r chosen and signed by q and the sign of x. Accurate to 2 ulps
+// over all finite x.
 template <bool isSine, typename OpTy>
 LogicalResult SinAndCosApproximation<isSine, OpTy>::matchAndRewrite(
     OpTy op, PatternRewriter &rewriter) const {
@@ -1485,112 +1574,123 @@ LogicalResult SinAndCosApproximation<isSine, OpTy>::matchAndRewrite(
     return rewriter.notifyMatchFailure(op, "unsupported operand type");
 
   std::optional<VectorShape> shape = vectorShape(op.getOperand());
+  if (shape && !shape->scalableFlags.empty() &&
+      llvm::is_contained(shape->scalableFlags.drop_back(), true))
+    return rewriter.notifyMatchFailure(op, "scalable leading dimension");
 
   ImplicitLocOpBuilder builder(op->getLoc(), rewriter);
-  auto bcast = [&](Value value) -> Value {
-    return broadcast(builder, value, shape);
+  Type i32Type = broadcast(builder.getI32Type(), shape);
+  auto f32 = [&](float value) {
+    return broadcast(builder, f32Cst(builder, value), shape);
   };
-  auto mul = [&](Value a, Value b) -> Value {
-    return arith::MulFOp::create(builder, a, b);
+  auto i32 = [&](int32_t value) {
+    return broadcast(builder, i32Cst(builder, value), shape);
   };
-  auto sub = [&](Value a, Value b) -> Value {
-    return arith::SubFOp::create(builder, a, b);
+  auto fma = [&](Value a, Value b, Value c) -> Value {
+    return math::FmaOp::create(builder, a, b, c);
   };
-  auto floor = [&](Value a) { return math::FloorOp::create(builder, a); };
-
-  auto i32Vec = broadcast(builder.getI32Type(), shape);
-  auto fPToSingedInteger = [&](Value a) -> Value {
-    return arith::FPToSIOp::create(builder, i32Vec, a);
-  };
-
-  auto modulo4 = [&](Value a) -> Value {
-    return arith::AndIOp::create(builder, a, bcast(i32Cst(builder, 3)));
-  };
-
-  auto isEqualTo = [&](Value a, Value b) -> Value {
-    return arith::CmpIOp::create(builder, arith::CmpIPredicate::eq, a, b);
-  };
-
-  auto isGreaterThan = [&](Value a, Value b) -> Value {
-    return arith::CmpIOp::create(builder, arith::CmpIPredicate::sgt, a, b);
-  };
-
   auto select = [&](Value cond, Value t, Value f) -> Value {
     return arith::SelectOp::create(builder, cond, t, f);
   };
 
-  auto fmla = [&](Value a, Value b, Value c) {
-    return math::FmaOp::create(builder, a, b, c);
-  };
-
-  auto bitwiseOr = [&](Value a, Value b) {
-    return arith::OrIOp::create(builder, a, b);
-  };
-
-  Value twoOverPi = bcast(f32Cst(builder, (float)TWO_OVER_PI));
-  Value piOverTwo = bcast(f32Cst(builder, (float)PI_OVER_2));
-
   Value x = op.getOperand();
+  Value absX = math::AbsFOp::create(builder, x);
 
-  Value k = floor(mul(x, twoOverPi));
+  // Adding 1.5 * 2^23 rounds |x| * 2/pi to the nearest integer q, whose low
+  // bits are then the low bits of the sum.
+  Value magic = f32(12582912.0f);
+  Value qRounded = arith::AddFOp::create(
+      builder, arith::MulFOp::create(builder, absX, f32(0.636619746685028f)),
+      magic);
+  Value q = arith::SubFOp::create(builder, qRounded, magic);
+  Value quadrant = arith::BitcastOp::create(builder, i32Type, qRounded);
 
-  Value y = sub(x, mul(k, piOverTwo));
+  // Cody-Waite reduction with pi/2 in three parts, accurate below the
+  // threshold.
+  Value r = fma(q, f32(-1.57079601287841796875f), absX);
+  r = fma(q, f32(-3.1391647326017846353352069854736328125e-07f), r);
+  r = fma(q,
+          f32(-5.390302529957764765544681040410068817436695098876953125e-15f),
+          r);
 
-  Value cstOne = bcast(f32Cst(builder, 1.0));
-  Value cstNegativeOne = bcast(f32Cst(builder, -1.0));
-
-  Value cstSC2 = bcast(f32Cst(builder, -0.16666667163372039794921875f));
-  Value cstSC4 = bcast(f32Cst(builder, 8.333347737789154052734375e-3f));
-  Value cstSC6 = bcast(f32Cst(builder, -1.9842604524455964565277099609375e-4f));
-  Value cstSC8 =
-      bcast(f32Cst(builder, 2.760012648650445044040679931640625e-6f));
-  Value cstSC10 =
-      bcast(f32Cst(builder, -2.50293279435709337121807038784027099609375e-8f));
-
-  Value cstCC2 = bcast(f32Cst(builder, -0.5f));
-  Value cstCC4 = bcast(f32Cst(builder, 4.166664183139801025390625e-2f));
-  Value cstCC6 = bcast(f32Cst(builder, -1.388833043165504932403564453125e-3f));
-  Value cstCC8 = bcast(f32Cst(builder, 2.47562347794882953166961669921875e-5f));
-  Value cstCC10 =
-      bcast(f32Cst(builder, -2.59630184018533327616751194000244140625e-7f));
-
-  Value kMod4 = modulo4(fPToSingedInteger(k));
-
-  Value kR0 = isEqualTo(kMod4, bcast(i32Cst(builder, 0)));
-  Value kR1 = isEqualTo(kMod4, bcast(i32Cst(builder, 1)));
-  Value kR2 = isEqualTo(kMod4, bcast(i32Cst(builder, 2)));
-  Value kR3 = isEqualTo(kMod4, bcast(i32Cst(builder, 3)));
-
-  Value sinuseCos = isSine ? bitwiseOr(kR1, kR3) : bitwiseOr(kR0, kR2);
-  Value negativeRange = isSine ? isGreaterThan(kMod4, bcast(i32Cst(builder, 1)))
-                               : bitwiseOr(kR1, kR2);
-
-  Value y2 = mul(y, y);
-
-  Value base = select(sinuseCos, cstOne, y);
-  Value cstC2 = select(sinuseCos, cstCC2, cstSC2);
-  Value cstC4 = select(sinuseCos, cstCC4, cstSC4);
-  Value cstC6 = select(sinuseCos, cstCC6, cstSC6);
-  Value cstC8 = select(sinuseCos, cstCC8, cstSC8);
-  Value cstC10 = select(sinuseCos, cstCC10, cstSC10);
-
-  Value v1 = fmla(y2, cstC10, cstC8);
-  Value v2 = fmla(y2, v1, cstC6);
-  Value v3 = fmla(y2, v2, cstC4);
-  Value v4 = fmla(y2, v3, cstC2);
-  Value v5 = fmla(y2, v4, cstOne);
-  Value v6 = mul(base, v5);
-
-  Value approximation = select(negativeRange, mul(cstNegativeOne, v6), v6);
-  // The range reduction turns -0 into +0; sin keeps the sign of a zero.
-  if (isSine) {
-    Value isZero = arith::CmpFOp::create(builder, arith::CmpFPredicate::OEQ, x,
-                                         bcast(f32Cst(builder, 0.0f)));
-    approximation = select(isZero, x, approximation);
+  Value isHuge = arith::AndIOp::create(
+      builder,
+      arith::CmpFOp::create(builder, arith::CmpFPredicate::OGE, absX,
+                            f32(isSine ? 117435.992f : 71476.0625f)),
+      arith::CmpFOp::create(builder, arith::CmpFPredicate::ONE, absX,
+                            f32(std::numeric_limits<float>::infinity())));
+  // The Payne-Hanek reduction costs several times the rest; run it only when
+  // some element needs it.
+  Value anyHuge = isHuge;
+  while (auto vectorType = dyn_cast<VectorType>(anyHuge.getType())) {
+    if (vectorType.getRank() == 0) {
+      anyHuge =
+          vector::ExtractOp::create(builder, anyHuge, ArrayRef<int64_t>{});
+    } else if (vectorType.getRank() == 1) {
+      anyHuge = vector::ReductionOp::create(builder, vector::CombiningKind::OR,
+                                            anyHuge);
+    } else {
+      Value slices = vector::ExtractOp::create(builder, anyHuge, 0);
+      for (int64_t i = 1; i < vectorType.getDimSize(0); ++i)
+        slices = arith::OrIOp::create(
+            builder, slices, vector::ExtractOp::create(builder, anyHuge, i));
+      anyHuge = slices;
+    }
   }
+  auto ifHuge =
+      scf::IfOp::create(builder, TypeRange{r.getType(), quadrant.getType()},
+                        anyHuge, /*withElseRegion=*/true);
+  {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(ifHuge.thenBlock());
+    auto [hugeR, hugeQuadrant] = reduceHugeAngle(builder, absX, shape);
+    scf::YieldOp::create(builder,
+                         ValueRange{select(isHuge, hugeR, r),
+                                    select(isHuge, hugeQuadrant, quadrant)});
+    builder.setInsertionPointToStart(ifHuge.elseBlock());
+    scf::YieldOp::create(builder, ValueRange{r, quadrant});
+  }
+  r = ifHuge.getResult(0);
+  quadrant = ifHuge.getResult(1);
 
-  rewriter.replaceOp(op, approximation);
+  Value r2 = arith::MulFOp::create(builder, r, r);
+  Value cosR = f32(2.4372266125283204019069671630859375e-05f);
+  cosR = fma(cosR, r2, f32(-0.00138865201734006404876708984375f));
+  cosR = fma(cosR, r2, f32(0.041666619479656219482421875f));
+  cosR = fma(cosR, r2, f32(-0.5f));
+  cosR = fma(cosR, r2, f32(1.0f));
+  Value sinR =
+      f32(-0.0001959234114083702898469196984621021329076029360294342041015625f);
+  sinR = fma(
+      sinR, r2,
+      f32(0.0083326873655616851693794799871284340042620897293090820312500000f));
+  sinR = fma(
+      sinR, r2,
+      f32(-0.1666666203982298255503735617821803316473960876464843750000000000f));
+  sinR = arith::MulFOp::create(builder, sinR, r2);
+  sinR = fma(sinR, r, r);
 
+  // An odd quadrant swaps sin and cos.
+  Value isEven = arith::CmpIOp::create(
+      builder, arith::CmpIPredicate::eq,
+      arith::AndIOp::create(builder, quadrant, i32(1)), i32(0));
+  Value poly = isSine ? select(isEven, sinR, cosR) : select(isEven, cosR, sinR);
+
+  // Quadrants 2 and 3 negate; sin is odd in x and cos is even.
+  Value sign;
+  if (isSine) {
+    sign = arith::XOrIOp::create(
+        builder, arith::BitcastOp::create(builder, i32Type, x),
+        arith::ShLIOp::create(builder, quadrant, i32(30)));
+  } else {
+    sign = arith::ShLIOp::create(
+        builder, arith::AddIOp::create(builder, quadrant, i32(1)), i32(30));
+  }
+  sign = arith::AndIOp::create(builder, sign,
+                               i32(static_cast<int32_t>(0x80000000u)));
+  Value result = arith::XOrIOp::create(
+      builder, arith::BitcastOp::create(builder, i32Type, poly), sign);
+  rewriter.replaceOpWithNewOp<arith::BitcastOp>(op, x.getType(), result);
   return success();
 }
 

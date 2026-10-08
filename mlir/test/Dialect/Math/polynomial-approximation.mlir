@@ -1016,11 +1016,15 @@ func.func @rsqrt_f16(%arg0 : vector<2x8xf16>) -> vector<2x8xf16> {
   return %0 : vector<2x8xf16>
 }
 
-// The range reduction turns -0 into +0, so sin returns a zero argument itself.
+// sin reduces |x| and takes the sign of x, so sin(-0) is -0.
 // CHECK-LABEL: func @sin_keeps_zero_sign(
 // CHECK-SAME:    %[[X:.*]]: f32) -> f32
-// CHECK:         %[[IS_ZERO:.*]] = arith.cmpf oeq, %[[X]], %{{.*}} : f32
-// CHECK:         %[[RESULT:.*]] = arith.select %[[IS_ZERO]], %[[X]], %{{.*}} : f32
+// CHECK:         %[[X_BITS:.*]] = arith.bitcast %[[X]] : f32 to i32
+// CHECK:         %[[SIGN:.*]] = arith.xori %[[X_BITS]], %{{.*}} : i32
+// CHECK:         %[[SIGN_BIT:.*]] = arith.andi %[[SIGN]], %{{.*}} : i32
+// CHECK:         %[[POLY_BITS:.*]] = arith.bitcast %{{.*}} : f32 to i32
+// CHECK:         %[[BITS:.*]] = arith.xori %[[POLY_BITS]], %[[SIGN_BIT]] : i32
+// CHECK:         %[[RESULT:.*]] = arith.bitcast %[[BITS]] : i32 to f32
 // CHECK:         return %[[RESULT]] : f32
 func.func @sin_keeps_zero_sign(%arg0: f32) -> f32 {
   %0 = math.sin %arg0 : f32
