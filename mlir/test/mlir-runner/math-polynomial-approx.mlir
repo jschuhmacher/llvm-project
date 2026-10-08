@@ -475,7 +475,7 @@ func.func @sin() {
   %pi_over_2 = arith.constant 1.57079632679 : f32
   call @sin_f32(%pi_over_2) : (f32) -> ()
 
-  // CHECK: 0
+  // CHECK: -8.74228e-08
   %pi = arith.constant 3.14159265359 : f32
   call @sin_f32(%pi) : (f32) -> ()
 
@@ -514,7 +514,7 @@ func.func @cos() {
   %pi_over_4 = arith.constant 0.78539816339 : f32
   call @cos_f32(%pi_over_4) : (f32) -> ()
 
-  // CHECK: 0
+  // CHECK: -4.37114e-08
   %pi_over_2 = arith.constant 1.57079632679 : f32
   call @cos_f32(%pi_over_2) : (f32) -> ()
 
@@ -522,7 +522,7 @@ func.func @cos() {
   %pi = arith.constant 3.14159265359 : f32
   call @cos_f32(%pi) : (f32) -> ()
 
-  // CHECK: 0
+  // CHECK: 1.19249e-08
   %pi_3_over_2 = arith.constant 4.71238898038 : f32
   call @cos_f32(%pi_3_over_2) : (f32) -> ()
 
@@ -530,6 +530,24 @@ func.func @cos() {
   %vec_x = arith.constant dense<[9.42477796077, 2.09439510239, -1.57079632679]> : vector<3xf32>
   call @cos_3xf32(%vec_x) : (vector<3xf32>) -> ()
 
+  return
+}
+
+// An argument keeps the constants below from being folded.
+func.func @sin_cos_6xf32(%x : vector<6xf32>) {
+  %sin = math.sin %x : vector<6xf32>
+  vector.print %sin : vector<6xf32>
+  %cos = math.cos %x : vector<6xf32>
+  vector.print %cos : vector<6xf32>
+  return
+}
+
+// Arguments past the Cody-Waite range need the Payne-Hanek reduction.
+func.func @sin_cos_large() {
+  %x = arith.constant dense<[1.0e4, -1.0e6, 117435.992, 1.0e10, -3.0e38, 8.5e37]> : vector<6xf32>
+  // CHECK: ( -0.305614, 0.34999{{[34]}}, -0.116936, -0.487506, -0.874905, -0.998101 )
+  // CHECK: ( -0.952155, 0.936752, -0.99314, 0.87312, -0.484295, -0.0616049 )
+  call @sin_cos_6xf32(%x) : (vector<6xf32>) -> ()
   return
 }
 
@@ -849,6 +867,7 @@ func.func @main() {
   call @expm1(): () -> ()
   call @sin(): () -> ()
   call @cos(): () -> ()
+  call @sin_cos_large(): () -> ()
   call @asin(): () -> ()
   call @acos(): () -> ()
   call @atan() : () -> ()
