@@ -151,12 +151,36 @@ func.func @entry() {
     (1.0, 0.0),
     // CHECK-NEXT:  1
     // CHECK-NEXT:  0
-    (1.0, 1.0)
+    (1.0, 1.0),
     // CHECK-NEXT:  1.098
     // CHECK-NEXT:  0.455
-  ]> : tensor<7xcomplex<f32>>
+    // A negative real part gives an exact zero real part and the sign of the
+    // imaginary part.
+    (-2.0, 0.0),
+    // CHECK-NEXT: {{^}}0{{$}}
+    // CHECK-NEXT:  1.41421
+    (-2.0, -0.0),
+    // CHECK-NEXT: {{^}}0{{$}}
+    // CHECK-NEXT:  -1.41421
+    (0.0, -0.0),
+    // CHECK-NEXT: {{^}}0{{$}}
+    // CHECK-NEXT: {{^}}-0{{$}}
+    (-4.0, 0.0),
+    // CHECK-NEXT: {{^}}0{{$}}
+    // CHECK-NEXT:  2
+    // Parts whose squares underflow or overflow.
+    (1.0e-30, 1.0e-30),
+    // CHECK-NEXT:  1.09868e-15
+    // CHECK-NEXT:  4.5509e-16
+    (-3.0e38, 3.0e38),
+    // CHECK-NEXT:  7.88239e+18
+    // CHECK-NEXT:  1.90298e+19
+    (1.0e-45, 0.0)
+    // CHECK-NEXT:  3.74339e-23
+    // CHECK-NEXT: {{^}}0{{$}}
+  ]> : tensor<14xcomplex<f32>>
   %sqrt_test_cast = tensor.cast %sqrt_test
-    :  tensor<7xcomplex<f32>> to tensor<?xcomplex<f32>>
+    :  tensor<14xcomplex<f32>> to tensor<?xcomplex<f32>>
 
   %sqrt_func = func.constant @sqrt : (complex<f32>) -> complex<f32>
   call @test_unary(%sqrt_test_cast, %sqrt_func)
