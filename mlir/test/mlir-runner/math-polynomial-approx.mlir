@@ -750,6 +750,12 @@ func.func @cbrt_f32(%a : f32) {
   return
 }
 
+func.func @cbrt_6xf32(%a : vector<6xf32>) {
+  %r = math.cbrt %a : vector<6xf32>
+  vector.print %r : vector<6xf32>
+  return
+}
+
 func.func @cbrt() {
   // CHECK: 1
   %a = arith.constant 1.0 : f32
@@ -778,6 +784,11 @@ func.func @cbrt() {
   // CHECK: 2.57128
   %g = arith.constant 17.0 : f32
   call @cbrt_f32(%g) : (f32) -> ()
+
+  // Subnormal inputs and the largest finite values.
+  // CHECK: ( 1.11903e-15, -4.64158e-14, 1.44225e-13, 6.97953e+12, 0.230835, 107.277 )
+  %h = arith.constant dense<[1.0e-45, -1.0e-40, 3.0e-39, 3.4e38, 0.0123, 1234567.0]> : vector<6xf32>
+  call @cbrt_6xf32(%h) : (vector<6xf32>) -> ()
 
   return
 }
