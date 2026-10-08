@@ -350,12 +350,19 @@ func.func @entry() {
     (-1.0, 0.0),
     // CHECK-NOT: -1
     // CHECK-NEXT:  1
-    (0.0, -1.0)
+    (0.0, -1.0),
     // CHECK-NOT:  -1
     // CHECK-NEXT:  1
-  ]> : tensor<10xcomplex<f64>>
+    // An infinite part gives inf, even with a NaN part.
+    (0x7FF0000000000000, 0x7FF8000000000000),
+    // CHECK-NEXT:  inf
+    (0x7FF8000000000000, 0xFFF0000000000000),
+    // CHECK-NEXT:  inf
+    (0x7FF8000000000000, 1.0)
+    // CHECK-NEXT:  nan
+  ]> : tensor<13xcomplex<f64>>
   %abs_test_cast = tensor.cast %abs_test
-    :  tensor<10xcomplex<f64>> to tensor<?xcomplex<f64>>
+    :  tensor<13xcomplex<f64>> to tensor<?xcomplex<f64>>
 
   %abs_func = func.constant @abs : (complex<f64>) -> f64
 
