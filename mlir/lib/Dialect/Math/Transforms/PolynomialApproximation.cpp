@@ -1582,6 +1582,12 @@ LogicalResult SinAndCosApproximation<isSine, OpTy>::matchAndRewrite(
   Value v6 = mul(base, v5);
 
   Value approximation = select(negativeRange, mul(cstNegativeOne, v6), v6);
+  // The range reduction turns -0 into +0; sin keeps the sign of a zero.
+  if (isSine) {
+    Value isZero = arith::CmpFOp::create(builder, arith::CmpFPredicate::OEQ, x,
+                                         bcast(f32Cst(builder, 0.0f)));
+    approximation = select(isZero, x, approximation);
+  }
 
   rewriter.replaceOp(op, approximation);
 
