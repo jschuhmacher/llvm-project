@@ -25,9 +25,9 @@ using namespace mlir;
 
 namespace {
 
-enum class AbsFn { abs, sqrt, rsqrt };
+enum class AbsFn { abs, rsqrt };
 
-// Returns the absolute value, its square root or its reciprocal square root.
+// Returns the absolute value or its reciprocal square root.
 Value computeAbs(Value real, Value imag, arith::FastMathFlags fmf,
                  ImplicitLocOpBuilder &b, AbsFn fn = AbsFn::abs) {
   Value one = arith::ConstantOp::create(b, real.getType(),
@@ -53,18 +53,8 @@ Value computeAbs(Value real, Value imag, arith::FastMathFlags fmf,
     max = math::RsqrtOp::create(b, max, fmfWithNaNInf);
   }
 
-  if (fn == AbsFn::sqrt) {
-    Value quarter = arith::ConstantOp::create(
-        b, real.getType(), b.getFloatAttr(real.getType(), 0.25));
-    // sqrt(sqrt(a*b)) would avoid the pow, but will overflow more easily.
-    Value sqrt = math::SqrtOp::create(b, max, fmfWithNaNInf);
-    Value p025 =
-        math::PowFOp::create(b, ratioSqPlusOne, quarter, fmfWithNaNInf);
-    result = arith::MulFOp::create(b, sqrt, p025, fmfWithNaNInf);
-  } else {
-    Value sqrt = math::SqrtOp::create(b, ratioSqPlusOne, fmfWithNaNInf);
-    result = arith::MulFOp::create(b, max, sqrt, fmfWithNaNInf);
-  }
+  Value sqrt = math::SqrtOp::create(b, ratioSqPlusOne, fmfWithNaNInf);
+  result = arith::MulFOp::create(b, max, sqrt, fmfWithNaNInf);
 
   Value isNaN = arith::CmpFOp::create(b, arith::CmpFPredicate::UNO, result,
                                       result, fmfWithNaNInf);
@@ -646,6 +636,9 @@ struct SinOpConversion : public TrigonometricOpConversion<complex::SinOp> {
 };
 
 // The algorithm is listed in https://dl.acm.org/doi/pdf/10.1145/363717.363780.
+// sqrt(x + iy) = t + iy/2t for x >= 0 and |y|/2t + i copysign(t, y) for
+// x < 0, with t = sqrt((|x| + |z|) / 2). Neither form cancels, and both keep
+// the signs of zero parts.
 struct SqrtOpConversion : public OpConversionPattern<complex::SqrtOp> {
   using OpConversionPattern<complex::SqrtOp>::OpConversionPattern;
 
@@ -658,66 +651,77 @@ struct SqrtOpConversion : public OpConversionPattern<complex::SqrtOp> {
     auto elementType = cast<FloatType>(type.getElementType());
     arith::FastMathFlags fmf = op.getFastMathFlagsAttr().getValue();
 
-    auto cst = [&](APFloat v) {
+    const auto &floatSemantics = elementType.getFloatSemantics();
+    auto cst = [&](APFloat v) -> Value {
       return arith::ConstantOp::create(b, elementType,
                                        b.getFloatAttr(elementType, v));
     };
-    const auto &floatSemantics = elementType.getFloatSemantics();
+    auto pow2 = [&](int exponent) -> Value {
+      return cst(scalbn(APFloat::getOne(floatSemantics), exponent,
+                        APFloat::rmNearestTiesToEven));
+    };
     Value zero = cst(APFloat::getZero(floatSemantics));
-    Value half = arith::ConstantOp::create(b, elementType,
-                                           b.getFloatAttr(elementType, 0.5));
 
     Value real = complex::ReOp::create(b, elementType, adaptor.getComplex());
     Value imag = complex::ImOp::create(b, elementType, adaptor.getComplex());
-    Value absSqrt = computeAbs(real, imag, fmf, b, AbsFn::sqrt);
-    Value argArg = math::Atan2Op::create(b, imag, real, fmf);
-    Value sqrtArg = arith::MulFOp::create(b, argArg, half, fmf);
-    Value cos = math::CosOp::create(b, sqrtArg, fmf);
-    Value sin = math::SinOp::create(b, sqrtArg, fmf);
-    // sin(atan2(0, inf)) = 0, sqrt(abs(inf)) = inf, but we can't multiply
-    // 0 * inf.
-    Value sinIsZero =
-        arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, sin, zero, fmf);
 
-    Value resultReal = arith::MulFOp::create(b, absSqrt, cos, fmf);
+    // Scale by an even power of two so that |z| and t neither overflow nor
+    // underflow, and t by its square root after.
+    int minExponent = APFloat::semanticsMinExponent(floatSemantics);
+    int maxExponent = APFloat::semanticsMaxExponent(floatSemantics);
+    int upExponent =
+        std::min<int>(2 * APFloat::semanticsPrecision(floatSemantics),
+                      maxExponent - 1) &
+        ~1;
+    Value maxPart =
+        arith::MaximumFOp::create(b, math::AbsFOp::create(b, real, fmf),
+                                  math::AbsFOp::create(b, imag, fmf), fmf);
+    Value isTiny = arith::CmpFOp::create(b, arith::CmpFPredicate::OLT, maxPart,
+                                         pow2(minExponent / 2), fmf);
+    Value isLarge = arith::CmpFOp::create(b, arith::CmpFPredicate::OGT, maxPart,
+                                          pow2(maxExponent - 7), fmf);
+    Value one = pow2(0);
+    Value scale = arith::SelectOp::create(
+        b, isTiny, pow2(upExponent),
+        arith::SelectOp::create(b, isLarge, pow2(-8), one));
+    Value unscale = arith::SelectOp::create(
+        b, isTiny, pow2(-upExponent / 2),
+        arith::SelectOp::create(b, isLarge, pow2(4), one));
+    Value scaledReal = arith::MulFOp::create(b, real, scale, fmf);
+    Value scaledImag = arith::MulFOp::create(b, imag, scale, fmf);
+    Value absZ = computeAbs(scaledReal, scaledImag, fmf, b);
+
+    Value halfSum = arith::MulFOp::create(
+        b,
+        arith::AddFOp::create(b, math::AbsFOp::create(b, scaledReal, fmf), absZ,
+                              fmf),
+        pow2(-1), fmf);
+    Value t = arith::MulFOp::create(b, math::SqrtOp::create(b, halfSum, fmf),
+                                    unscale, fmf);
+    // y / 2t is y itself at z = 0.
+    Value other = arith::SelectOp::create(
+        b, arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, absZ, zero, fmf),
+        imag,
+        arith::DivFOp::create(b, imag, arith::AddFOp::create(b, t, t, fmf),
+                              fmf));
+
+    Value isNegative =
+        arith::CmpFOp::create(b, arith::CmpFPredicate::OLT, real, zero, fmf);
+    Value resultReal = arith::SelectOp::create(
+        b, isNegative, math::AbsFOp::create(b, other, fmf), t);
     Value resultImag = arith::SelectOp::create(
-        b, sinIsZero, zero, arith::MulFOp::create(b, absSqrt, sin, fmf));
+        b, isNegative, math::CopySignOp::create(b, t, imag, fmf), other);
+
+    // An infinite y gives inf + iy, whatever x is.
     if (!arith::bitEnumContainsAll(fmf, arith::FastMathFlags::nnan |
                                             arith::FastMathFlags::ninf)) {
       Value inf = cst(APFloat::getInf(floatSemantics));
-      Value negInf = cst(APFloat::getInf(floatSemantics, true));
-      Value nan = cst(APFloat::getNaN(floatSemantics));
-      Value absImag = math::AbsFOp::create(b, elementType, imag, fmf);
-
-      Value absImagIsInf = arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ,
-                                                 absImag, inf, fmf);
-      Value absImagIsNotInf = arith::CmpFOp::create(
-          b, arith::CmpFPredicate::ONE, absImag, inf, fmf);
-      Value realIsInf =
-          arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, real, inf, fmf);
-      Value realIsNegInf = arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ,
-                                                 real, negInf, fmf);
-
-      resultReal = arith::SelectOp::create(
-          b, arith::AndIOp::create(b, realIsNegInf, absImagIsNotInf), zero,
-          resultReal);
-      resultReal = arith::SelectOp::create(
-          b, arith::OrIOp::create(b, absImagIsInf, realIsInf), inf, resultReal);
-
-      Value imagSignInf = math::CopySignOp::create(b, inf, imag, fmf);
-      resultImag = arith::SelectOp::create(
-          b,
-          arith::CmpFOp::create(b, arith::CmpFPredicate::UNO, absSqrt, absSqrt),
-          nan, resultImag);
-      resultImag = arith::SelectOp::create(
-          b, arith::OrIOp::create(b, absImagIsInf, realIsNegInf), imagSignInf,
-          resultImag);
+      Value imagIsInf =
+          arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ,
+                                math::AbsFOp::create(b, imag, fmf), inf, fmf);
+      resultReal = arith::SelectOp::create(b, imagIsInf, inf, resultReal);
+      resultImag = arith::SelectOp::create(b, imagIsInf, imag, resultImag);
     }
-
-    Value resultIsZero =
-        arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, absSqrt, zero, fmf);
-    resultReal = arith::SelectOp::create(b, resultIsZero, zero, resultReal);
-    resultImag = arith::SelectOp::create(b, resultIsZero, zero, resultImag);
 
     rewriter.replaceOpWithNewOp<complex::CreateOp>(op, type, resultReal,
                                                    resultImag);
