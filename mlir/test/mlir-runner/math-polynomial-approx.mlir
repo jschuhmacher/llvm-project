@@ -685,7 +685,7 @@ func.func @atan2() {
   // CHECK: -1.5708
   call @atan2_f32(%neg_one, %zero) : (f32, f32) -> ()
 
-  // CHECK: nan
+  // CHECK: 0
   call @atan2_f32(%zero, %zero) : (f32, f32) -> ()
 
   // CHECK: 1.10715

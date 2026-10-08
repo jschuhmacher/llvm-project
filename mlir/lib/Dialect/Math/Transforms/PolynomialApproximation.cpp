@@ -495,47 +495,33 @@ Atan2Approximation::matchAndRewrite(math::Atan2Op op,
   ImplicitLocOpBuilder builder(op->getLoc(), rewriter);
   std::optional<VectorShape> shape = vectorShape(op.getResult());
 
-  // Compute atan in the valid range.
-  auto div = arith::DivFOp::create(builder, y, x);
-  auto atan = math::AtanOp::create(builder, div);
-
-  // Determine what the atan would be for a 180 degree rotation.
+  // IEEE 754 atan2: the angle of (|x|, |y|) in [0, pi/2], which is 0 for two
+  // zeros and pi/4 for two infinities, reflected to pi - angle when x has its
+  // sign bit set, then given the sign of y. NaNs propagate through the ratio.
   auto zero = broadcast(builder, f32Cst(builder, 0.0f), shape);
+  auto one = broadcast(builder, f32Cst(builder, 1.0f), shape);
   auto pi = broadcast(builder, f32Cst(builder, 3.14159265359f), shape);
-  auto addPi = arith::AddFOp::create(builder, atan, pi);
-  auto subPi = arith::SubFOp::create(builder, atan, pi);
-  auto atanGt =
-      arith::CmpFOp::create(builder, arith::CmpFPredicate::OGT, atan, zero);
-  auto flippedAtan = arith::SelectOp::create(builder, atanGt, subPi, addPi);
-
-  // Determine whether to directly use atan or use the 180 degree flip
-  auto xGt = arith::CmpFOp::create(builder, arith::CmpFPredicate::OGT, x, zero);
-  Value result = arith::SelectOp::create(builder, xGt, atan, flippedAtan);
-
-  // Handle x = 0, y > 0
-  Value xZero =
-      arith::CmpFOp::create(builder, arith::CmpFPredicate::OEQ, x, zero);
-  Value yGt =
-      arith::CmpFOp::create(builder, arith::CmpFPredicate::OGT, y, zero);
-  Value isHalfPi = arith::AndIOp::create(builder, xZero, yGt);
-  auto halfPi = broadcast(builder, f32Cst(builder, 1.57079632679f), shape);
-  result = arith::SelectOp::create(builder, isHalfPi, halfPi, result);
-
-  // Handle x = 0, y < 0
-  Value yLt =
-      arith::CmpFOp::create(builder, arith::CmpFPredicate::OLT, y, zero);
-  Value isNegativeHalfPiPi = arith::AndIOp::create(builder, xZero, yLt);
-  auto negativeHalfPiPi =
-      broadcast(builder, f32Cst(builder, -1.57079632679f), shape);
-  result = arith::SelectOp::create(builder, isNegativeHalfPiPi,
-                                   negativeHalfPiPi, result);
-
-  // Handle x = 0, y = 0;
-  Value yZero =
-      arith::CmpFOp::create(builder, arith::CmpFPredicate::OEQ, y, zero);
-  Value isNan = arith::AndIOp::create(builder, xZero, yZero);
-  Value cstNan = broadcast(builder, f32FromBits(builder, 0x7fc00000), shape);
-  result = arith::SelectOp::create(builder, isNan, cstNan, result);
+  auto quarterPi = broadcast(builder, f32Cst(builder, 0.785398163397f), shape);
+  auto inf = broadcast(builder, f32FromBits(builder, 0x7f800000), shape);
+  Value absX = math::AbsFOp::create(builder, x);
+  Value absY = math::AbsFOp::create(builder, y);
+  Value angle =
+      math::AtanOp::create(builder, arith::DivFOp::create(builder, absY, absX));
+  auto isEq = [&](Value lhs, Value rhs) {
+    return arith::CmpFOp::create(builder, arith::CmpFPredicate::OEQ, lhs, rhs);
+  };
+  Value bothZero =
+      arith::AndIOp::create(builder, isEq(absX, zero), isEq(absY, zero));
+  angle = arith::SelectOp::create(builder, bothZero, zero, angle);
+  Value bothInf =
+      arith::AndIOp::create(builder, isEq(absX, inf), isEq(absY, inf));
+  angle = arith::SelectOp::create(builder, bothInf, quarterPi, angle);
+  Value xSignBit =
+      arith::CmpFOp::create(builder, arith::CmpFPredicate::OLT,
+                            math::CopySignOp::create(builder, one, x), zero);
+  angle = arith::SelectOp::create(
+      builder, xSignBit, arith::SubFOp::create(builder, pi, angle), angle);
+  Value result = math::CopySignOp::create(builder, angle, y);
 
   rewriter.replaceOp(op, result);
   return success();
