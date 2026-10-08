@@ -257,10 +257,22 @@ func.func @roundf_func(%a: f32) -> f32 {
 // CHECK-LABEL:   func @powf_func
 // CHECK-SAME:    (%[[ARG0:.+]]: f64, %[[ARG1:.+]]: f64) -> f64
 func.func @powf_func(%a: f64, %b: f64) -> f64 {
-  // CHECK: %[[LOGA:.+]] = math.log %[[ARG0]] : f64
+  // CHECK-DAG: %[[NAN:.+]] = arith.constant 0x7FF8000000000000 : f64
+  // CHECK-DAG: %[[ONE:.+]] = arith.constant 1.000000e+00 : f64
+  // CHECK-DAG: %[[TWO_P52:.+]] = arith.constant 0x4330000000000000 : f64
+  // CHECK: %[[ABSA:.+]] = math.absf %[[ARG0]] : f64
+  // CHECK: %[[ABSB:.+]] = math.absf %[[ARG1]] : f64
+  // CHECK: %[[LOGA:.+]] = math.log %[[ABSA]] : f64
   // CHECK: %[[MUL:.+]] = arith.mulf %[[ARG1]], %[[LOGA]] : f64
   // CHECK: %[[EXP:.+]] = math.exp %[[MUL]] : f64
-  // CHECK: return %[[EXP]] : f64
+  // CHECK: %[[SMALL:.+]] = arith.cmpf olt, %[[ABSB]], %[[TWO_P52]] : f64
+  // CHECK: %[[INTB:.+]] = arith.fptosi %{{.+}} : f64 to i64
+  // CHECK: %[[SIGN:.+]] = math.copysign %[[ONE]], %[[ARG0]] : f64
+  // CHECK: %[[NEG:.+]] = arith.negf %[[EXP]] : f64
+  // CHECK: %[[SIGNED:.+]] = arith.select %{{.+}}, %[[NEG]], %[[EXP]] : f64
+  // CHECK: %[[CHECKED:.+]] = arith.select %{{.+}}, %[[NAN]], %[[SIGNED]] : f64
+  // CHECK: %[[RESULT:.+]] = arith.select %{{.+}}, %[[ONE]], %[[CHECKED]] : f64
+  // CHECK: return %[[RESULT]] : f64
   %ret = math.powf %a, %b : f64
   return %ret : f64
 }
@@ -298,8 +310,14 @@ func.func @powf_func_negone(%a: f64) -> f64{
 // CHECK-LABEL:   func @powf_func_half
 // CHECK-SAME:    (%[[ARG0:.+]]: f64) -> f64
 func.func @powf_func_half(%a: f64) -> f64{
+  // CHECK-DAG: %[[NEG_INF:.+]] = arith.constant 0xFFF0000000000000 : f64
+  // CHECK-DAG: %[[ZERO:.+]] = arith.constant 0.000000e+00 : f64
+  // CHECK-DAG: %[[INF:.+]] = arith.constant 0x7FF0000000000000 : f64
   // CHECK: %[[SQRT:.+]] = math.sqrt %[[ARG0]] : f64
-  // CHECK: return %[[SQRT]] : f64
+  // CHECK: %[[ROOT:.+]] = arith.addf %[[SQRT]], %[[ZERO]] : f64
+  // CHECK: %[[IS_NEG_INF:.+]] = arith.cmpf oeq, %[[ARG0]], %[[NEG_INF]] : f64
+  // CHECK: %[[RESULT:.+]] = arith.select %[[IS_NEG_INF]], %[[INF]], %[[ROOT]] : f64
+  // CHECK: return %[[RESULT]] : f64
   %b = arith.constant 0.5 : f64
   %ret = math.powf %a, %b : f64
   return %ret : f64
@@ -308,9 +326,11 @@ func.func @powf_func_half(%a: f64) -> f64{
 // CHECK-LABEL:   func @powf_func_neghalf
 // CHECK-SAME:    (%[[ARG0:.+]]: f64) -> f64
 func.func @powf_func_neghalf(%a: f64) -> f64{
-  // CHECK: %[[CSTONE:.+]] = arith.constant 1.000000e+00 : f64
+  // CHECK-DAG: %[[CSTONE:.+]] = arith.constant 1.000000e+00 : f64
   // CHECK: %[[SQRT:.+]] = math.sqrt %[[ARG0]] : f64
-  // CHECK: %[[DIV:.+]] = arith.divf %[[CSTONE]], %[[SQRT]] : f64
+  // CHECK: %[[ROOT:.+]] = arith.addf %[[SQRT]], %{{.+}} : f64
+  // CHECK: %[[FIXED:.+]] = arith.select %{{.+}}, %{{.+}}, %[[ROOT]] : f64
+  // CHECK: %[[DIV:.+]] = arith.divf %[[CSTONE]], %[[FIXED]] : f64
   // CHECK: return %[[DIV]] : f64
   %b = arith.constant -0.5 : f64
   %ret = math.powf %a, %b : f64
@@ -728,10 +748,12 @@ func.func @math_fpowi_to_powf_tensor(%0 : tensor<8xf32>, %1: tensor<8xi32>) -> t
 }
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<8xf32>, %[[ARG1:.*]]: tensor<8xi32>) -> tensor<8xf32> {
 // CHECK: %[[TOFP:.*]] = arith.sitofp %[[ARG1]] : tensor<8xi32> to tensor<8xf32>
-// CHECK: %[[LOGA:.*]] = math.log %[[ARG0]] : tensor<8xf32>
+// CHECK: %[[ABSA:.*]] = math.absf %[[ARG0]] : tensor<8xf32>
+// CHECK: %[[LOGA:.*]] = math.log %[[ABSA]] : tensor<8xf32>
 // CHECK: %[[MUL:.*]] = arith.mulf %[[TOFP]], %[[LOGA]] : tensor<8xf32>
 // CHECK: %[[EXP:.*]] = math.exp %[[MUL]] : tensor<8xf32>
-// CHECK: return %[[EXP]]
+// CHECK: math.copysign
+// CHECK: return %{{.+}} : tensor<8xf32>
 // -----
 
 // CHECK-LABEL:   func.func @math_fpowi_to_powf_scalar
@@ -741,10 +763,12 @@ func.func @math_fpowi_to_powf_scalar(%0 : f32, %1: i64) -> f32 {
 }
 // CHECK-SAME: (%[[ARG0:.*]]: f32, %[[ARG1:.*]]: i64) -> f32 {
 // CHECK:        %[[TOFP:.*]] = arith.sitofp %[[ARG1]] : i64 to f32
-// CHECK:        %[[LOGA:.*]] = math.log %[[ARG0]] : f32
+// CHECK:        %[[ABSA:.*]] = math.absf %[[ARG0]] : f32
+// CHECK:        %[[LOGA:.*]] = math.log %[[ABSA]] : f32
 // CHECK:        %[[MUL:.*]] = arith.mulf %[[TOFP]], %[[LOGA]] : f32
 // CHECK:        %[[EXP:.*]] = math.exp %[[MUL]] : f32
-// CHECK:       return %[[EXP]] : f32
+// CHECK:        math.copysign
+// CHECK:       return %{{.+}} : f32
 
 // -----
 
