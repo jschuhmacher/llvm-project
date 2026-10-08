@@ -791,12 +791,14 @@ void memref::populateMemRefNarrowTypeEmulationConversions(
           return nullptr;
 
         StridedLayoutAttr layoutAttr;
+        // The linearized memref keeps rank 0 for a rank-0 source.
+        SmallVector<int64_t> layoutStrides(ty.getRank() == 0 ? 0 : 1, 1);
         // If the offset is 0, we do not need a strided layout as the stride is
         // 1, so we only use the strided layout if the offset is not 0.
         if (offset != 0) {
           if (offset == ShapedType::kDynamic) {
-            layoutAttr = StridedLayoutAttr::get(ty.getContext(), offset,
-                                                ArrayRef<int64_t>{1});
+            layoutAttr =
+                StridedLayoutAttr::get(ty.getContext(), offset, layoutStrides);
           } else {
             // Check if the number of bytes are a multiple of the loadStoreWidth
             // and if so, divide it by the loadStoreWidth to get the offset.
@@ -804,8 +806,8 @@ void memref::populateMemRefNarrowTypeEmulationConversions(
               return std::nullopt;
             offset = (offset * width) / loadStoreWidth;
 
-            layoutAttr = StridedLayoutAttr::get(ty.getContext(), offset,
-                                                ArrayRef<int64_t>{1});
+            layoutAttr =
+                StridedLayoutAttr::get(ty.getContext(), offset, layoutStrides);
           }
         }
 
