@@ -20,7 +20,11 @@ func.func @complex_abs(%arg: complex<f32>) -> f32 {
 // CHECK: %[[SQRT:.*]] = llvm.intr.sqrt(%[[RATIO_SQ_PLUS_ONE]]) : (f32) -> f32
 // CHECK: %[[RESULT:.*]] = llvm.fmul %[[MAX]], %[[SQRT]] : f32
 // CHECK: %[[IS_NAN:.*]] = llvm.fcmp "uno" %[[RESULT]], %11 : f32
-// CHECK: %[[RET:.*]] = llvm.select %[[IS_NAN]], %[[MIN]], %[[RESULT]] : i1, f32
+// CHECK: %[[MAX_NUM:.*]] = llvm.intr.maxnum(%[[ABS_REAL]], %[[ABS_IMAG]]) : (f32, f32) -> f32
+// CHECK: %[[INF:.*]] = llvm.mlir.constant(0x7F800000 : f32) : f32
+// CHECK: %[[IS_INF:.*]] = llvm.fcmp "oeq" %[[MAX_NUM]], %[[INF]] : f32
+// CHECK: %[[NAN_RESULT:.*]] = llvm.select %[[IS_INF]], %[[INF]], %[[MIN]] : i1, f32
+// CHECK: %[[RET:.*]] = llvm.select %[[IS_NAN]], %[[NAN_RESULT]], %[[RESULT]] : i1, f32
 // CHECK: llvm.return %[[RET]] : f32
 
 // CHECK-LABEL: llvm.func @complex_eq

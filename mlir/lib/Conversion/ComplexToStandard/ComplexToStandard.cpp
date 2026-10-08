@@ -68,7 +68,21 @@ Value computeAbs(Value real, Value imag, arith::FastMathFlags fmf,
 
   Value isNaN = arith::CmpFOp::create(b, arith::CmpFPredicate::UNO, result,
                                       result, fmfWithNaNInf);
-  return arith::SelectOp::create(b, isNaN, min, result);
+  Value nanResult = min;
+  if (fn == AbsFn::abs) {
+    // Like hypot, an infinite part makes the modulus infinite, even with a NaN.
+    Value maxNum = arith::MaxNumFOp::create(b, absReal, absImag, fmfWithNaNInf);
+    Value inf = arith::ConstantOp::create(
+        b, real.getType(),
+        b.getFloatAttr(
+            real.getType(),
+            APFloat::getInf(
+                cast<FloatType>(real.getType()).getFloatSemantics())));
+    Value isInf = arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, maxNum,
+                                        inf, fmfWithNaNInf);
+    nanResult = arith::SelectOp::create(b, isInf, inf, min);
+  }
+  return arith::SelectOp::create(b, isNaN, nanResult, result);
 }
 
 struct AbsOpConversion : public OpConversionPattern<complex::AbsOp> {
