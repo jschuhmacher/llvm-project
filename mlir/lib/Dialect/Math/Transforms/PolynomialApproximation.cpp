@@ -1707,89 +1707,90 @@ struct CbrtApproximation : public OpRewritePattern<math::CbrtOp> {
 };
 } // namespace
 
-// Estimation of cube-root using an algorithm defined in
-// Hacker's Delight 2nd Edition.
+// Computes the cube root of |x| = m * 2^(3k) with m in [1, 8) as
+// cbrt(m) * 2^k, scaling subnormals by 2^24 first. A bit-level estimate of
+// cbrt(m) is refined by one Halley step and one Newton step whose residual
+// m - t^3 is exact by fma, to within 1 ulp over all finite x.
 LogicalResult
 CbrtApproximation::matchAndRewrite(math::CbrtOp op,
                                    PatternRewriter &rewriter) const {
-  auto operand = op.getOperand();
+  Value operand = op.getOperand();
   if (!getElementTypeOrSelf(operand).isF32())
     return rewriter.notifyMatchFailure(op, "unsupported operand type");
 
   ImplicitLocOpBuilder b(op->getLoc(), rewriter);
   std::optional<VectorShape> shape = vectorShape(operand);
-
-  Type floatTy = getElementTypeOrSelf(operand.getType());
-  Type intTy = b.getIntegerType(floatTy.getIntOrFloatBitWidth());
-
-  // Convert to vector types if necessary.
-  floatTy = broadcast(floatTy, shape);
-  intTy = broadcast(intTy, shape);
-
-  auto bconst = [&](TypedAttr attr) -> Value {
-    Value value = arith::ConstantOp::create(b, attr);
-    return broadcast(b, value, shape);
+  Type floatTy = broadcast(b.getF32Type(), shape);
+  Type intTy = broadcast(b.getI32Type(), shape);
+  auto f32 = [&](float value) { return broadcast(b, f32Cst(b, value), shape); };
+  auto i32 = [&](int32_t value) {
+    return broadcast(b, i32Cst(b, value), shape);
+  };
+  auto mul = [&](Value lhs, Value rhs) -> Value {
+    return arith::MulFOp::create(b, lhs, rhs);
+  };
+  auto add = [&](Value lhs, Value rhs) -> Value {
+    return arith::AddFOp::create(b, lhs, rhs);
   };
 
-  // Declare the initial values:
-  Value intTwo = bconst(b.getI32IntegerAttr(2));
-  Value intFour = bconst(b.getI32IntegerAttr(4));
-  Value intEight = bconst(b.getI32IntegerAttr(8));
-  Value intMagic = bconst(b.getI32IntegerAttr(0x2a5137a0));
-  Value fpThird = bconst(b.getF32FloatAttr(0.33333333f));
-  Value fpTwo = bconst(b.getF32FloatAttr(2.0f));
-  Value fpZero = bconst(b.getF32FloatAttr(0.0f));
-
-  // Compute an approximation of one third:
-  // union {int ix; float x;};
-  // x = x0;
-  // ix = ix/4 + ix/16;
   Value absValue = math::AbsFOp::create(b, operand);
-  Value intValue = arith::BitcastOp::create(b, intTy, absValue);
-  Value divideBy4 = arith::ShRSIOp::create(b, intValue, intTwo);
-  Value divideBy16 = arith::ShRSIOp::create(b, intValue, intFour);
-  intValue = arith::AddIOp::create(b, divideBy4, divideBy16);
+  Value isSubnormal =
+      arith::CmpFOp::create(b, arith::CmpFPredicate::OLT, absValue,
+                            f32(std::numeric_limits<float>::min()));
+  Value scaled = arith::SelectOp::create(
+      b, isSubnormal, mul(absValue, f32(16777216.0f)), absValue);
 
-  // ix = ix + ix/16;
-  divideBy16 = arith::ShRSIOp::create(b, intValue, intFour);
-  intValue = arith::AddIOp::create(b, intValue, divideBy16);
+  // Split the exponent e into 3k + rem, with rem in [0, 3).
+  Value bits = arith::BitcastOp::create(b, intTy, scaled);
+  Value exponent = arith::SubIOp::create(
+      b, arith::ShRUIOp::create(b, bits, i32(23)), i32(127));
+  Value k = arith::FloorDivSIOp::create(b, exponent, i32(3));
+  Value rem =
+      arith::SubIOp::create(b, exponent, arith::MulIOp::create(b, k, i32(3)));
+  Value mantissa = arith::OrIOp::create(
+      b, arith::AndIOp::create(b, bits, i32(0x007fffff)),
+      arith::ShLIOp::create(b, arith::AddIOp::create(b, rem, i32(127)),
+                            i32(23)));
+  Value m = arith::BitcastOp::create(b, floatTy, mantissa);
 
-  // ix = ix + ix/256;
-  Value divideBy256 = arith::ShRSIOp::create(b, intValue, intEight);
-  intValue = arith::AddIOp::create(b, intValue, divideBy256);
+  // Dividing the bits by 3 divides the exponent by 3; the bias constant from
+  // musl's cbrtf restores it to within 5 bits of cbrt(m).
+  Value t = arith::BitcastOp::create(
+      b, floatTy,
+      arith::AddIOp::create(b, arith::DivUIOp::create(b, mantissa, i32(3)),
+                            i32(709958130)));
 
-  // ix = 0x2a5137a0 + ix;
-  intValue = arith::AddIOp::create(b, intValue, intMagic);
+  // Halley: t * (2m + t^3) / (m + 2t^3).
+  Value cube = mul(mul(t, t), t);
+  t = mul(t, arith::DivFOp::create(b, add(add(m, m), cube),
+                                   add(m, add(cube, cube))));
 
-  // Perform one newtons step:
-  // x = 0.33333333f*(2.0f*x + x0/(x*x));
-  Value floatValue = arith::BitcastOp::create(b, floatTy, intValue);
-  Value squared = arith::MulFOp::create(b, floatValue, floatValue);
-  Value mulTwo = arith::MulFOp::create(b, floatValue, fpTwo);
-  Value divSquared = arith::DivFOp::create(b, absValue, squared);
-  floatValue = arith::AddFOp::create(b, mulTwo, divSquared);
-  floatValue = arith::MulFOp::create(b, floatValue, fpThird);
+  // Newton: t - (t^3 - m) / 3t^2, with t^3 - m from t^2 and its rounding error.
+  Value square = mul(t, t);
+  Value squareError =
+      math::FmaOp::create(b, t, t, arith::NegFOp::create(b, square));
+  Value residual =
+      add(math::FmaOp::create(b, square, t, arith::NegFOp::create(b, m)),
+          mul(squareError, t));
+  t = arith::SubFOp::create(
+      b, t, arith::DivFOp::create(b, residual, mul(f32(3.0f), square)));
 
-  // x = 0.33333333f*(2.0f*x + x0/(x*x));
-  squared = arith::MulFOp::create(b, floatValue, floatValue);
-  mulTwo = arith::MulFOp::create(b, floatValue, fpTwo);
-  divSquared = arith::DivFOp::create(b, absValue, squared);
-  floatValue = arith::AddFOp::create(b, mulTwo, divSquared);
-  floatValue = arith::MulFOp::create(b, floatValue, fpThird);
+  // Scale by 2^k, less 2^8 for a scaled subnormal.
+  k = arith::SelectOp::create(b, isSubnormal,
+                              arith::SubIOp::create(b, k, i32(8)), k);
+  Value result = arith::BitcastOp::create(
+      b, floatTy,
+      arith::AddIOp::create(b, arith::BitcastOp::create(b, intTy, t),
+                            arith::ShLIOp::create(b, k, i32(23))));
 
-  // Zeros and infinities are their own cube roots; the Newton steps would
-  // divide inf by inf. Then restore the sign.
-  Value fpInf =
-      bconst(b.getF32FloatAttr(std::numeric_limits<float>::infinity()));
-  Value isZero =
-      arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, absValue, fpZero);
-  Value isInf =
-      arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, absValue, fpInf);
-  floatValue = arith::SelectOp::create(
-      b, arith::OrIOp::create(b, isZero, isInf), absValue, floatValue);
-  floatValue = math::CopySignOp::create(b, floatValue, operand);
-
-  rewriter.replaceOp(op, floatValue);
+  // Zeros, infinities and NaN are their own cube roots.
+  Value isFiniteNonzero = arith::AndIOp::create(
+      b,
+      arith::CmpFOp::create(b, arith::CmpFPredicate::OGT, absValue, f32(0.0f)),
+      arith::CmpFOp::create(b, arith::CmpFPredicate::ONE, absValue,
+                            f32(std::numeric_limits<float>::infinity())));
+  result = arith::SelectOp::create(b, isFiniteNonzero, result, absValue);
+  rewriter.replaceOpWithNewOp<math::CopySignOp>(op, result, operand);
   return success();
 }
 

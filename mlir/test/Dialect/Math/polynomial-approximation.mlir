@@ -873,49 +873,46 @@ func.func @atan2_scalar(%arg0: f16, %arg1: f16) -> f16 {
 
 // CHECK-LABEL: @cbrt_vector
 // CHECK-SAME: %[[ARG0:.+]]: vector<4xf32>
-
-// CHECK: %[[INF_FP:.+]] = arith.constant dense<0x7F800000> : vector<4xf32>
-// CHECK: %[[TWO_INT:.+]] = arith.constant dense<2>
-// CHECK: %[[FOUR_INT:.+]] = arith.constant dense<4>
-// CHECK: %[[EIGHT_INT:.+]] = arith.constant dense<8>
-// CHECK: %[[MAGIC:.+]] = arith.constant dense<709965728>
-// CHECK: %[[THIRD_FP:.+]] = arith.constant dense<0.333333343> : vector<4xf32>
-// CHECK: %[[TWO_FP:.+]] = arith.constant dense<2.000000e+00> : vector<4xf32>
-// CHECK: %[[ZERO_FP:.+]] = arith.constant dense<0.000000e+00> : vector<4xf32>
-
+// CHECK-DAG: %[[INF:.+]] = arith.constant dense<0x7F800000> : vector<4xf32>
+// CHECK-DAG: %[[ZERO:.+]] = arith.constant dense<0.000000e+00> : vector<4xf32>
+// CHECK-DAG: %[[THREE:.+]] = arith.constant dense<3.000000e+00> : vector<4xf32>
+// CHECK-DAG: %[[MAGIC:.+]] = arith.constant dense<709958130> : vector<4xi32>
+// CHECK-DAG: %[[TWO_24:.+]] = arith.constant dense<0x4B800000> : vector<4xf32>
+// CHECK-DAG: %[[MIN_NORMAL:.+]] = arith.constant dense<1.17549435E-38> : vector<4xf32>
 // CHECK: %[[ABS:.+]] = math.absf %[[ARG0]] : vector<4xf32>
 
-// Perform the initial approximation:
-// CHECK: %[[CAST:.+]] = arith.bitcast %[[ABS]] : vector<4xf32> to vector<4xi32>
-// CHECK: %[[SH_TWO:.+]] = arith.shrsi %[[CAST]], %[[TWO_INT]]
-// CHECK: %[[SH_FOUR:.+]] = arith.shrsi %[[CAST]], %[[FOUR_INT]]
-// CHECK: %[[APPROX0:.+]] = arith.addi %[[SH_TWO]], %[[SH_FOUR]]
-// CHECK: %[[SH_FOUR:.+]] = arith.shrsi %[[APPROX0]], %[[FOUR_INT]]
-// CHECK: %[[APPROX1:.+]] = arith.addi %[[APPROX0]], %[[SH_FOUR]]
-// CHECK: %[[SH_EIGHT:.+]] = arith.shrsi %[[APPROX1]], %[[EIGHT_INT]]
-// CHECK: %[[APPROX2:.+]] = arith.addi %[[APPROX1]], %[[SH_EIGHT]]
-// CHECK: %[[FIX:.+]] = arith.addi %[[APPROX2]], %[[MAGIC]]
-// CHECK: %[[BCAST:.+]] = arith.bitcast %[[FIX]]
+// Subnormals are scaled by 2^24 into the normal range.
+// CHECK: %[[IS_SUB:.+]] = arith.cmpf olt, %[[ABS]], %[[MIN_NORMAL]]
+// CHECK: %[[UP:.+]] = arith.mulf %[[ABS]], %[[TWO_24]]
+// CHECK: %[[SCALED:.+]] = arith.select %[[IS_SUB]], %[[UP]], %[[ABS]]
 
-// First Newton Step:
-// CHECK: %[[SQR:.+]] = arith.mulf %[[BCAST]], %[[BCAST]]
-// CHECK: %[[DOUBLE:.+]] = arith.mulf %[[BCAST]], %[[TWO_FP]]
-// CHECK: %[[DIV:.+]] = arith.divf %[[ABS]], %[[SQR]]
-// CHECK: %[[ADD:.+]] = arith.addf %[[DOUBLE]], %[[DIV]]
-// CHECK: %[[APPROX3:.+]] = arith.mulf %[[ADD]], %[[THIRD_FP]]
+// |x| = m * 2^(3k) with m in [1, 8):
+// CHECK: %[[BITS:.+]] = arith.bitcast %[[SCALED]]
+// CHECK: %[[K:.+]] = arith.floordivsi
+// CHECK: %[[M_BITS:.+]] = arith.ori
+// CHECK: %[[M:.+]] = arith.bitcast %[[M_BITS]] : vector<4xi32> to vector<4xf32>
 
-// Second Newton Step:
-// CHECK: %[[SQR:.+]] = arith.mulf %[[APPROX3]], %[[APPROX3]]
-// CHECK: %[[DOUBLE:.+]] = arith.mulf %[[APPROX3]], %[[TWO_FP]]
-// CHECK: %[[DIV:.+]] = arith.divf %[[ABS]], %[[SQR]]
-// CHECK: %[[ADD:.+]] = arith.addf %[[DOUBLE]], %[[DIV]]
-// CHECK: %[[APPROX4:.+]] = arith.mulf %[[ADD]], %[[THIRD_FP]]
+// Bit-level estimate, then one Halley step:
+// CHECK: %[[THIRD:.+]] = arith.divui %[[M_BITS]]
+// CHECK: %[[EST_BITS:.+]] = arith.addi %[[THIRD]], %[[MAGIC]]
+// CHECK: %[[EST:.+]] = arith.bitcast %[[EST_BITS]]
+// CHECK: %[[HALLEY:.+]] = arith.divf
+// CHECK: %[[T:.+]] = arith.mulf %[[EST]], %[[HALLEY]]
 
-// Zeros and infinities are their own cube roots; then copy the sign:
-// CHECK: %[[IS_ZERO:.+]] = arith.cmpf oeq, %[[ABS]], %[[ZERO_FP]]
-// CHECK: %[[IS_INF:.+]] = arith.cmpf oeq, %[[ABS]], %[[INF_FP]]
-// CHECK: %[[KEEP:.+]] = arith.ori %[[IS_ZERO]], %[[IS_INF]]
-// CHECK: %[[SEL:.+]] = arith.select %[[KEEP]], %[[ABS]], %[[APPROX4]]
+// One Newton step with t^3 - m exact by fma:
+// CHECK: %[[SQ:.+]] = arith.mulf %[[T]], %[[T]]
+// CHECK: %[[SQ_ERR:.+]] = math.fma %[[T]], %[[T]]
+// CHECK: %[[CUBE_M:.+]] = math.fma %[[SQ]], %[[T]]
+// CHECK: %[[THREE_SQ:.+]] = arith.mulf %[[SQ]], %[[THREE]]
+// CHECK: %[[STEP:.+]] = arith.divf %{{.+}}, %[[THREE_SQ]]
+// CHECK: %[[ROOT:.+]] = arith.subf %[[T]], %[[STEP]]
+
+// Scale by 2^k, keep zeros, infinities and NaN, and copy the sign:
+// CHECK: %[[RESULT:.+]] = arith.bitcast %{{.+}} : vector<4xi32> to vector<4xf32>
+// CHECK: %[[POS:.+]] = arith.cmpf ogt, %[[ABS]], %[[ZERO]]
+// CHECK: %[[FINITE:.+]] = arith.cmpf one, %[[ABS]], %[[INF]]
+// CHECK: %[[NORMAL:.+]] = arith.andi %[[POS]], %[[FINITE]]
+// CHECK: %[[SEL:.+]] = arith.select %[[NORMAL]], %[[RESULT]], %[[ABS]]
 // CHECK: %[[SIGN:.+]] = math.copysign %[[SEL]], %[[ARG0]]
 // CHECK: return %[[SIGN]]
 
