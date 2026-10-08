@@ -459,16 +459,23 @@ static LogicalResult convertPowfOp(math::PowFOp op, PatternRewriter &rewriter) {
       rewriter.replaceOp(op, div);
       return success();
     }
-    if (valueB.isExactlyValue(0.5)) {
-      // a^(1/2) -> sqrt(a)
-      Value sqrt = math::SqrtOp::create(b, operandA);
-      rewriter.replaceOp(op, sqrt);
-      return success();
-    }
-    if (valueB.isExactlyValue(-0.5)) {
-      // a^(-1/2) -> 1 / sqrt(a)
-      Value rsqrt = math::RsqrtOp::create(b, operandA);
-      rewriter.replaceOp(op, rsqrt);
+    if (valueB.isExactlyValue(0.5) || valueB.isExactlyValue(-0.5)) {
+      // a^(1/2) -> sqrt(a), except that pow gives +0 for -0 and +inf for
+      // -inf; a^(-1/2) is its reciprocal.
+      Value zero = createFloatConst(op->getLoc(), typeA, 0.0, b, operandA);
+      Value inf = createFloatConst(op->getLoc(), typeA, APFloat::getInf(sem), b,
+                                   operandA);
+      Value root =
+          arith::AddFOp::create(b, math::SqrtOp::create(b, operandA), zero);
+      Value isNegInf =
+          arith::CmpFOp::create(b, arith::CmpFPredicate::OEQ, operandA,
+                                arith::NegFOp::create(b, inf));
+      root = arith::SelectOp::create(b, isNegInf, inf, root);
+      if (valueB.isNegative()) {
+        Value one = createFloatConst(op->getLoc(), typeA, 1.0, b, operandA);
+        root = arith::DivFOp::create(b, one, root);
+      }
+      rewriter.replaceOp(op, root);
       return success();
     }
     if (valueB.isExactlyValue(2.0)) {
@@ -490,10 +497,74 @@ static LogicalResult convertPowfOp(math::PowFOp op, PatternRewriter &rewriter) {
     }
   }
 
-  Value logA = math::LogOp::create(b, operandA);
-  Value mult = arith::MulFOp::create(b, operandB, logA);
-  Value expResult = math::ExpOp::create(b, mult);
-  rewriter.replaceOp(op, expResult);
+  // IEEE 754 pow: |a|^b is exp(b * log|a|). It is negative when a has its sign
+  // bit set and b is an odd integer, NaN when a is finite and negative and b is
+  // finite and not an integer, and 1 when b is zero, a is one, or a is -1 and b
+  // is infinite.
+  auto cst = [&](const APFloat &value) {
+    return createFloatConst(op->getLoc(), typeA, value, b, operandA);
+  };
+  auto cmp = [&](arith::CmpFPredicate predicate, Value lhs, Value rhs) {
+    return arith::CmpFOp::create(b, predicate, lhs, rhs);
+  };
+  auto both = [&](Value lhs, Value rhs) {
+    return arith::AndIOp::create(b, lhs, rhs);
+  };
+  auto either = [&](Value lhs, Value rhs) {
+    return arith::OrIOp::create(b, lhs, rhs);
+  };
+  Value zero = cst(APFloat::getZero(sem));
+  Value one = cst(APFloat::getOne(sem));
+  Value inf = cst(APFloat::getInf(sem));
+  Value absA = math::AbsFOp::create(b, operandA);
+  Value absB = math::AbsFOp::create(b, operandB);
+  Value magnitude =
+      math::ExpOp::create(b, mulf(operandB, math::LogOp::create(b, absA)));
+
+  // Exponents of at least 2^p, p the precision, are even integers, infinity
+  // included. Smaller ones are integers if they survive a round trip through
+  // an integer, which also gives their parity; rounding functions would become
+  // libm calls on some targets.
+  auto floatType = cast<FloatType>(getElementTypeOrSelf(typeB));
+  Type intType = b.getIntegerType(floatType.getWidth());
+  if (auto shapedType = dyn_cast<ShapedType>(typeB))
+    intType = shapedType.clone(intType);
+  Value bigExponent =
+      cst(APFloat(sem, APInt::getOneBitSet(floatType.getWidth(),
+                                           floatType.getFPMantissaWidth() - 1)
+                           .getZExtValue()));
+  Value isSmallB = cmp(arith::CmpFPredicate::OLT, absB, bigExponent);
+  Value smallB = arith::SelectOp::create(b, isSmallB, operandB, zero);
+  Value intB = arith::FPToSIOp::create(b, intType, smallB);
+  Value roundTripB = arith::SIToFPOp::create(b, typeB, intB);
+  Value isSmallInteger =
+      both(isSmallB, cmp(arith::CmpFPredicate::OEQ, roundTripB, operandB));
+  Value lowBit = arith::AndIOp::create(
+      b, intB, createIntConst(op->getLoc(), intType, 1, b, operandB));
+  Value isOdd = both(isSmallInteger,
+                     arith::CmpIOp::create(b, arith::CmpIPredicate::ne, lowBit,
+                                           createIntConst(op->getLoc(), intType,
+                                                          0, b, operandB)));
+  Value signBitSet = cmp(arith::CmpFPredicate::OLT,
+                         math::CopySignOp::create(b, one, operandA), zero);
+  Value result =
+      arith::SelectOp::create(b, both(signBitSet, isOdd),
+                              arith::NegFOp::create(b, magnitude), magnitude);
+
+  Value finiteNegativeA = both(cmp(arith::CmpFPredicate::OLT, operandA, zero),
+                               cmp(arith::CmpFPredicate::OLT, absA, inf));
+  Value finiteNonIntegerB =
+      both(isSmallB, cmp(arith::CmpFPredicate::ONE, roundTripB, operandB));
+  result = arith::SelectOp::create(b, both(finiteNegativeA, finiteNonIntegerB),
+                                   cst(APFloat::getNaN(sem)), result);
+
+  Value isOne = either(either(cmp(arith::CmpFPredicate::OEQ, operandB, zero),
+                              cmp(arith::CmpFPredicate::OEQ, operandA, one)),
+                       both(cmp(arith::CmpFPredicate::OEQ, operandA,
+                                arith::NegFOp::create(b, one)),
+                            cmp(arith::CmpFPredicate::OEQ, absB, inf)));
+  result = arith::SelectOp::create(b, isOne, one, result);
+  rewriter.replaceOp(op, result);
   return success();
 }
 
@@ -591,9 +662,11 @@ static LogicalResult convertCtlzOp(math::CountLeadingZerosOp op,
   if (isUnrankedShaped(operandTy))
     return failure();
 
-  // Only expand for integer or float element types (index has no fixed bitwidth).
+  // Only expand for integer or float element types (index has no fixed
+  // bitwidth).
   if (!eTy.isIntOrFloat()) {
-    return rewriter.notifyMatchFailure(op, "ctlz expansion only supports int or float types");
+    return rewriter.notifyMatchFailure(
+        op, "ctlz expansion only supports int or float types");
   }
 
   int32_t bitwidth = eTy.getIntOrFloatBitWidth();
