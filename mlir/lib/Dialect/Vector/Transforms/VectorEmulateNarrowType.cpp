@@ -699,7 +699,8 @@ struct ConvertVectorStore final : OpConversionPattern<vector::StoreOp> {
     //
     // TODO: Take linearizedInfo.linearizedOffset into account. This is
     // currently not needed/used/exercised as all our tests set offset to 0.
-    bool emulationRequiresPartialStores = *foldedNumFrontPadElems != 0;
+    bool emulationRequiresPartialStores =
+        *foldedNumFrontPadElems != 0 || !isDivisibleInSize;
 
     if (!emulationRequiresPartialStores) {
       // Basic case: storing full bytes.
@@ -783,18 +784,19 @@ struct ConvertVectorStore final : OpConversionPattern<vector::StoreOp> {
 
       storeFunc(rewriter, loc, memrefBase, currentDestIndex,
                 cast<VectorValue>(value), frontMask.getResult());
-    }
 
-    if (currentSourceIndex >= origElements) {
-      rewriter.eraseOp(op);
-      return success();
-    }
+      if (currentSourceIndex >= origElements) {
+        rewriter.eraseOp(op);
+        return success();
+      }
 
-    // Increment the destination index by 1 to align to the emulated width
-    // boundary.
-    auto constantOne = arith::ConstantIndexOp::create(rewriter, loc, 1);
-    currentDestIndex = arith::AddIOp::create(
-        rewriter, loc, rewriter.getIndexType(), currentDestIndex, constantOne);
+      // Increment the destination index by 1 to align to the emulated width
+      // boundary.
+      auto constantOne = arith::ConstantIndexOp::create(rewriter, loc, 1);
+      currentDestIndex = arith::AddIOp::create(
+          rewriter, loc, rewriter.getIndexType(), currentDestIndex,
+          constantOne);
+    }
 
     // 2. Full width store for the inner output bytes.
     // After the previous step, the store address is aligned to the emulated
