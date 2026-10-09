@@ -586,3 +586,27 @@ func.func @vector_store_i2_2d_const_nonzero_col(%arg0: vector<4xi2>) {
 // and one for byte 1 (element at position [0]).
 // CHECK: memref.generic_atomic_rmw %[[ALLOC]][%[[C0]]]
 // CHECK: memref.generic_atomic_rmw %[[ALLOC]][{{.+}}]
+
+// -----
+
+func.func @vector_store_i2_aligned_trailing_partial_store(%src: vector<2xi2>) {
+    %dest = memref.alloc() : memref<4x2xi2>
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    vector.store %src, %dest[%c2, %c0] : memref<4x2xi2>, vector<2xi2>
+    return
+}
+
+// A store that starts on byte 1 but does not fill it updates the byte
+// atomically, keeping its other two elements.
+
+// CHECK-LABEL: func @vector_store_i2_aligned_trailing_partial_store(
+//  CHECK-SAME:     %[[SRC:.+]]: vector<2xi2>)
+//       CHECK:   %[[DEST:.+]] = memref.alloc() : memref<2xi8>
+//       CHECK:   %[[C1:.+]] = arith.constant 1 : index
+//       CHECK:   %[[SRC_IN_BYTE:.+]] = vector.insert_strided_slice %[[SRC]]
+//       CHECK:   %[[MASK:.+]] = arith.constant dense<[true, true, false, false]>
+//       CHECK:   memref.generic_atomic_rmw %[[DEST]][%[[C1]]] : memref<2xi8> {
+//       CHECK:     %[[OLD:.+]] = vector.bitcast %{{.+}} : vector<1xi8> to vector<4xi2>
+//       CHECK:     arith.select %[[MASK]], %[[SRC_IN_BYTE]], %[[OLD]]
+//   CHECK-NOT:   vector.store

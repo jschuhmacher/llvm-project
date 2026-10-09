@@ -151,3 +151,66 @@ func.func @vector_store_i2_const_index_one_partial_store(%src: vector<1xi2>) {
 //      CHECK:  %[[RES_BYTE_AS_I8:.+]] = vector.bitcast %[[RES_BYTE]]
 // CHECK-SAME:    : vector<4xi2> to vector<1xi8>
 //      CHECK:  vector.store %[[RES_BYTE_AS_I8]], %[[DEST]][%[[C0]]]
+
+// -----
+
+func.func @vector_store_i2_aligned_trailing_partial_store(%src: vector<2xi2>) {
+    %dest = memref.alloc() : memref<4x2xi2>
+    %c0 = arith.constant 0 : index
+    %c2 = arith.constant 2 : index
+    vector.store %src, %dest[%c2, %c0] : memref<4x2xi2>, vector<2xi2>
+    return
+}
+
+// Store 4 bits starting on byte 1 of a 2-byte destination (`memref<4x2xi2>` is
+// emulated via `memref<2xi8>`). The store starts on a byte but does not fill
+// it, so it is one masked RMW that keeps the byte's other two elements.
+
+//      CHECK: func @vector_store_i2_aligned_trailing_partial_store(
+// CHECK-SAME:    %[[SRC:.+]]: vector<2xi2>)
+//      CHECK:  %[[DEST:.+]] = memref.alloc() : memref<2xi8>
+//      CHECK:  %[[C1:.+]] = arith.constant 1 : index
+//      CHECK:  %[[INIT:.+]] = arith.constant dense<0> : vector<4xi2>
+//      CHECK:  %[[SRC_IN_BYTE:.+]] = vector.insert_strided_slice %[[SRC]], %[[INIT]]
+// CHECK-SAME:    offsets = [0], strides = [1]
+//      CHECK:  %[[MASK:.+]] = arith.constant dense<[true, true, false, false]>
+//      CHECK:  %[[DEST_BYTE:.+]] = vector.load %[[DEST]][%[[C1]]]
+//      CHECK:  %[[DEST_BYTE_AS_I2:.+]] = vector.bitcast %[[DEST_BYTE]]
+//      CHECK:  %[[RES:.+]] = arith.select %[[MASK]], %[[SRC_IN_BYTE]], %[[DEST_BYTE_AS_I2]]
+//      CHECK:  %[[RES_AS_I8:.+]] = vector.bitcast %[[RES]]
+//      CHECK:  vector.store %[[RES_AS_I8]], %[[DEST]][%[[C1]]]
+//  CHECK-NOT:  vector.store
+
+// -----
+
+func.func @vector_store_i2_aligned_full_and_trailing_stores(%src: vector<7xi2>) {
+    %dest = memref.alloc() : memref<3x8xi2>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    vector.store %src, %dest[%c1, %c0] : memref<3x8xi2>, vector<7xi2>
+    return
+}
+
+// Store 14 bits starting on byte 2 of a 6-byte destination: one full byte, then
+// one masked RMW for the trailing three elements of byte 3.
+
+//      CHECK: func @vector_store_i2_aligned_full_and_trailing_stores(
+// CHECK-SAME:    %[[SRC:.+]]: vector<7xi2>)
+//      CHECK:  %[[DEST:.+]] = memref.alloc() : memref<6xi8>
+//      CHECK:  %[[C2:.+]] = arith.constant 2 : index
+//      CHECK:  %[[FULL:.+]] = vector.extract_strided_slice %[[SRC]]
+// CHECK-SAME:    offsets = [0], sizes = [4], strides = [1]
+//      CHECK:  %[[FULL_AS_I8:.+]] = vector.bitcast %[[FULL]]
+// CHECK-SAME:    : vector<4xi2> to vector<1xi8>
+//      CHECK:  vector.store %[[FULL_AS_I8]], %[[DEST]][%[[C2]]]
+//      CHECK:  %[[C1:.+]] = arith.constant 1 : index
+//      CHECK:  %[[C3:.+]] = arith.addi %[[C2]], %[[C1]]
+//      CHECK:  %[[TAIL:.+]] = vector.extract_strided_slice %[[SRC]]
+// CHECK-SAME:    offsets = [4], sizes = [3], strides = [1]
+//      CHECK:  %[[TAIL_IN_BYTE:.+]] = vector.insert_strided_slice %[[TAIL]]
+//      CHECK:  %[[MASK:.+]] = arith.constant dense<[true, true, true, false]>
+//      CHECK:  %[[DEST_BYTE:.+]] = vector.load %[[DEST]][%[[C3]]]
+//      CHECK:  %[[DEST_BYTE_AS_I2:.+]] = vector.bitcast %[[DEST_BYTE]]
+//      CHECK:  %[[RES:.+]] = arith.select %[[MASK]], %[[TAIL_IN_BYTE]], %[[DEST_BYTE_AS_I2]]
+//      CHECK:  %[[RES_AS_I8:.+]] = vector.bitcast %[[RES]]
+//      CHECK:  vector.store %[[RES_AS_I8]], %[[DEST]][%[[C3]]]
