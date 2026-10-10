@@ -122,8 +122,9 @@ void transform::ApplyLowerMaskedTransfersPatternsOp::populatePatterns(
 
 void transform::ApplyMaterializeMasksPatternsOp::populatePatterns(
     RewritePatternSet &patterns) {
-  populateVectorMaskMaterializationPatterns(patterns,
-                                            /*force32BitVectorIndices=*/false);
+  populateVectorMaskMaterializationPatterns(
+      patterns, /*force32BitVectorIndices=*/false, /*benefit=*/1,
+      /*lowerCreateMask=*/!getPreserveCreateMasks());
 }
 
 //===----------------------------------------------------------------------===//
