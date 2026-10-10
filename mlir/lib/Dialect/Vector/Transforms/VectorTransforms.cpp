@@ -1499,6 +1499,28 @@ private:
   const bool force32BitVectorIndices;
 };
 
+/// Rewrites `and(create_mask(a...), create_mask(b...))` into
+/// `create_mask(minsi(a, b)...)`. Each mask sets a leading box, so their
+/// conjunction is the box of the per-dimension minimum.
+struct ComposeCreateMaskAnd : public OpRewritePattern<arith::AndIOp> {
+  using Base::Base;
+
+  LogicalResult matchAndRewrite(arith::AndIOp op,
+                                PatternRewriter &rewriter) const override {
+    auto lhs = op.getLhs().getDefiningOp<vector::CreateMaskOp>();
+    auto rhs = op.getRhs().getDefiningOp<vector::CreateMaskOp>();
+    if (!lhs || !rhs || lhs.getType() != rhs.getType())
+      return failure();
+    SmallVector<Value> bounds;
+    for (auto [a, b] : llvm::zip_equal(lhs.getOperands(), rhs.getOperands()))
+      bounds.push_back(
+          rewriter.createOrFold<arith::MinSIOp>(op.getLoc(), a, b));
+    rewriter.replaceOpWithNewOp<vector::CreateMaskOp>(op, lhs.getType(),
+                                                      bounds);
+    return success();
+  }
+};
+
 /// Returns true if all the `i1` elements of `constantOp` are set to `value`.
 static bool allI1ConstantValuesSetTo(arith::ConstantOp constantOp, bool value) {
   auto denseAttr = dyn_cast<DenseIntElementsAttr>(constantOp.getValue());
@@ -2388,12 +2410,22 @@ void mlir::vector::populateFoldArithExtensionPatterns(
 
 void mlir::vector::populateVectorMaskMaterializationPatterns(
     RewritePatternSet &patterns, bool force32BitVectorIndices,
-    PatternBenefit benefit) {
-  patterns.add<VectorCreateMaskOpConversion,
-               MaterializeTransferMask<vector::TransferReadOp>,
+    PatternBenefit benefit, bool lowerCreateMask) {
+  patterns.add<MaterializeTransferMask<vector::TransferReadOp>,
                MaterializeTransferMask<vector::TransferWriteOp>>(
       patterns.getContext(), force32BitVectorIndices, benefit);
+  if (lowerCreateMask) {
+    patterns.add<VectorCreateMaskOpConversion>(
+        patterns.getContext(), force32BitVectorIndices, benefit);
+  } else {
+    populateComposeCreateMaskPatterns(patterns, benefit);
+  }
   patterns.add<FoldI1Select>(patterns.getContext(), benefit);
+}
+
+void mlir::vector::populateComposeCreateMaskPatterns(
+    RewritePatternSet &patterns, PatternBenefit benefit) {
+  patterns.add<ComposeCreateMaskAnd>(patterns.getContext(), benefit);
 }
 
 void mlir::vector::populateDropUnitDimWithShapeCastPatterns(

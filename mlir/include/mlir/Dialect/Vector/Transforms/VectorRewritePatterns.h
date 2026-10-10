@@ -387,9 +387,19 @@ void populateBubbleVectorBitCastOpPatterns(RewritePatternSet &patterns,
                                            PatternBenefit benefit = 1);
 
 /// These patterns materialize masks for various vector ops such as transfers.
+/// When `lowerCreateMask` is false, `vector.create_mask` ops are kept and
+/// conjunctions of them are composed into one (see
+/// `populateComposeCreateMaskPatterns`), so later rewrites such as narrow type
+/// emulation can still read the mask bounds.
 void populateVectorMaskMaterializationPatterns(RewritePatternSet &patterns,
                                                bool force32BitVectorIndices,
-                                               PatternBenefit benefit = 1);
+                                               PatternBenefit benefit = 1,
+                                               bool lowerCreateMask = true);
+
+/// Rewrites `arith.andi` of two `vector.create_mask` ops of the same type into
+/// one `vector.create_mask` of the per-dimension `arith.minsi` of the bounds.
+void populateComposeCreateMaskPatterns(RewritePatternSet &patterns,
+                                       PatternBenefit benefit = 1);
 
 /// Appends patterns for emulating vector operations over narrow types with ops
 /// over wider types. The `disableAtomicRMW` indicates whether to use a normal

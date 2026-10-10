@@ -218,9 +218,14 @@ def ApplyMaterializeMasksPatternsOp : Op<Transform_Dialect,
 
     This is usually the last step that is run after bufferization as part of the
     process of lowering to e.g. LLVM or NVVM.
+
+    With `preserve_create_masks`, `vector.create_mask` ops are kept and
+    conjunctions of them are composed into one.
   }];
 
-  let assemblyFormat = "attr-dict";
+  let arguments = (ins UnitAttr:$preserve_create_masks);
+  let assemblyFormat =
+    "(`preserve_create_masks` $preserve_create_masks^)? attr-dict";
 }
 
 def ApplyReorderMultiReductionPatternsOp: Op<Transform_Dialect,
