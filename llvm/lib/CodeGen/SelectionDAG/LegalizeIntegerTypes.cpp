@@ -1760,8 +1760,9 @@ SDValue DAGTypeLegalizer::PromoteIntRes_TRUNCATE(SDNode *N) {
 
     EVT HalfNVT = EVT::getVectorVT(*DAG.getContext(), NVT.getScalarType(),
                                    NumElts.divideCoefficientBy(2));
-    EOp1 = DAG.getNode(ISD::TRUNCATE, dl, HalfNVT, EOp1);
-    EOp2 = DAG.getNode(ISD::TRUNCATE, dl, HalfNVT, EOp2);
+    // The halves may be narrower than HalfNVT; only their low bits matter.
+    EOp1 = DAG.getAnyExtOrTrunc(EOp1, dl, HalfNVT);
+    EOp2 = DAG.getAnyExtOrTrunc(EOp2, dl, HalfNVT);
     return DAG.getNode(ISD::CONCAT_VECTORS, dl, NVT, EOp1, EOp2);
   }
   case TargetLowering::TypeWidenVector: {
@@ -1784,8 +1785,9 @@ SDValue DAGTypeLegalizer::PromoteIntRes_TRUNCATE(SDNode *N) {
   }
   }
 
-  // Truncate to NVT instead of VT
-  return DAG.getNode(ISD::TRUNCATE, dl, NVT, Res);
+  // Truncate to NVT instead of VT. A legal input may be narrower than NVT; the
+  // promoted result needs only its low bits.
+  return DAG.getAnyExtOrTrunc(Res, dl, NVT);
 }
 
 SDValue DAGTypeLegalizer::PromoteIntRes_UADDSUBO(SDNode *N, unsigned ResNo) {
