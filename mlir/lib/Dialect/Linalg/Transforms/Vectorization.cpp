@@ -4212,10 +4212,11 @@ static FailureOr<Operation *> vectorizeConvolution(
   bool vecChDimScalableFlag = false;
   if (!inputVecSizes.empty()) {
     // Only use the input vector size corresponding to the channel dim. Other
-    // vector dims will be inferred from the Ops.
-    assert((isaConvolutionOpOfType<linalg::DepthwiseConv1DNwcWcOp>(op) ||
-            isaConvolutionOpOfType<linalg::DepthwiseConv1DNcwCwOp>(op)) &&
-           "Not a 1D depthwise conv!");
+    // vector dims will be inferred from the Ops. Other convolutions, such as a
+    // strided non-channeled one, are not supported here.
+    if (!isaConvolutionOpOfType<linalg::DepthwiseConv1DNwcWcOp>(op) &&
+        !isaConvolutionOpOfType<linalg::DepthwiseConv1DNcwCwOp>(op))
+      return failure();
     size_t chDimIdx = 0;
     if (isaConvolutionOpOfType<linalg::DepthwiseConv1DNwcWcOp>(op))
       chDimIdx = 2;
