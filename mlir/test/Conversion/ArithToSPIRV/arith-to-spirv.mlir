@@ -1282,6 +1282,31 @@ func.func @sexti4_vector(%arg0: vector<4xi4>) -> vector<4xi32> {
   return %0 : vector<4xi32>
 }
 
+// i8 is emulated in i32 here: the sign bit must reach bit 31 before the
+// arithmetic shift, which leaves the result sign-extended to 32 bits.
+// CHECK-LABEL: @sexti4_to_emulated_i8_scalar
+func.func @sexti4_to_emulated_i8_scalar(%arg0: i4) -> i8 {
+  // CHECK: %[[INPUT:.+]] = builtin.unrealized_conversion_cast %arg0 : i4 to i32
+  // CHECK: %[[SIZE:.+]] = spirv.Constant 28 : i32
+  // CHECK: %[[SL:.+]] = spirv.ShiftLeftLogical %[[INPUT]], %[[SIZE]] : i32, i32
+  // CHECK: %[[SR:.+]] = spirv.ShiftRightArithmetic %[[SL]], %[[SIZE]] : i32, i32
+  %0 = arith.extsi %arg0 : i4 to i8
+  // CHECK: %[[RESULT:.+]] = builtin.unrealized_conversion_cast %[[SR]] : i32 to i8
+  // CHECK: return %[[RESULT]] : i8
+  return %0 : i8
+}
+
+// CHECK-LABEL: @sexti4_to_emulated_i8_vector
+func.func @sexti4_to_emulated_i8_vector(%arg0: vector<3xi4>) -> vector<3xi8> {
+  // CHECK: %[[INPUT:.+]] = builtin.unrealized_conversion_cast %arg0 : vector<3xi4> to vector<3xi32>
+  // CHECK: %[[SIZE:.+]] = spirv.Constant dense<28> : vector<3xi32>
+  // CHECK: %[[SL:.+]] = spirv.ShiftLeftLogical %[[INPUT]], %[[SIZE]] : vector<3xi32>, vector<3xi32>
+  // CHECK: %[[SR:.+]] = spirv.ShiftRightArithmetic %[[SL]], %[[SIZE]] : vector<3xi32>, vector<3xi32>
+  // CHECK-NOT: spirv.BitwiseAnd
+  %0 = arith.extsi %arg0 : vector<3xi4> to vector<3xi8>
+  return %0 : vector<3xi8>
+}
+
 } // end module
 
 // -----
