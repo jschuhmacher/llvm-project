@@ -255,6 +255,20 @@ func.func @dim_of_alloca(%size: index) -> index {
 
 // -----
 
+// CHECK-LABEL: func @dim_of_reinterpret_cast(
+//  CHECK-SAME:     %[[BASE:.*]]: memref<?xi4>, %[[ROWS:.*]]: index, %[[COLS:.*]]: index
+//       CHECK:   return %[[ROWS]], %[[COLS]] : index, index
+func.func @dim_of_reinterpret_cast(%base: memref<?xi4>, %rows: index, %cols: index) -> (index, index) {
+  %c0 = arith.constant 0 : index
+  %c2 = arith.constant 2 : index
+  %cast = memref.reinterpret_cast %base to offset: [0], sizes: [%rows, 6, %cols], strides: [%cols, %cols, 1] : memref<?xi4> to memref<?x6x?xi4, strided<[?, ?, 1]>>
+  %d0 = memref.dim %cast, %c0 : memref<?x6x?xi4, strided<[?, ?, 1]>>
+  %d2 = memref.dim %cast, %c2 : memref<?x6x?xi4, strided<[?, ?, 1]>>
+  return %d0, %d2 : index, index
+}
+
+// -----
+
 // Test case: Folding of memref.dim(memref.alloca(rank(%v)), %idx) -> rank(%v)
 // CHECK-LABEL: func @dim_of_alloca_with_dynamic_size(
 //  CHECK-SAME:     %[[MEM:[0-9a-z]+]]: memref<*xf32>
