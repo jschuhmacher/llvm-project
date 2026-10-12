@@ -1150,6 +1150,10 @@ OpFoldResult DimOp::fold(FoldAdaptor adaptor) {
     return *(view.getDynamicSizes().begin() +
              memrefType.getDynamicDimIndex(indexVal));
 
+  // A reinterpret_cast result has exactly the sizes it declares.
+  if (auto cast = dyn_cast_or_null<ReinterpretCastOp>(definingOp))
+    return cast.getMixedSizes()[indexVal];
+
   if (auto subview = dyn_cast_or_null<SubViewOp>(definingOp)) {
     // The result dim is dynamic (the static case was handled above). Dropped
     // dims always have static size 1, so dynamic source sizes are never
