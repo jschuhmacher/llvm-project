@@ -411,3 +411,33 @@ module attributes {transform.with_named_sequence} {
     transform.yield
   }
 }
+
+// -----
+
+// Masked vectorisation of a strided and dilated non-channelled 1D conv is not
+// yet supported.
+
+func.func @conv1d_non_channeled_strided_dilated(%input: tensor<7xf32>, %filter: tensor<2xf32>, %output: tensor<3xf32>) -> tensor<3xf32> {
+  // expected-error @+1 {{Attempted to vectorize, but failed}}
+  %0 = linalg.generic {
+      indexing_maps = [affine_map<(d0, d1) -> (d0 * 2 + d1 * 2)>,
+                       affine_map<(d0, d1) -> (d1)>,
+                       affine_map<(d0, d1) -> (d0)>],
+      iterator_types = ["parallel", "reduction"]}
+      ins(%input, %filter : tensor<7xf32>, tensor<2xf32>)
+      outs(%output : tensor<3xf32>) {
+    ^bb0(%in: f32, %w: f32, %out: f32):
+      %mul = arith.mulf %in, %w : f32
+      %add = arith.addf %out, %mul : f32
+      linalg.yield %add : f32
+  } -> tensor<3xf32>
+  return %0 : tensor<3xf32>
+}
+
+module attributes {transform.with_named_sequence} {
+  transform.named_sequence @__transform_main(%arg1: !transform.any_op {transform.readonly}) {
+    %0 = transform.structured.match ops{["linalg.generic"]} in %arg1 : (!transform.any_op) -> !transform.any_op
+    transform.structured.vectorize %0 vector_sizes [3, 2] : !transform.any_op
+    transform.yield
+  }
+}
