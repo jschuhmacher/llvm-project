@@ -1509,7 +1509,7 @@ struct ComposeCreateMaskAnd : public OpRewritePattern<arith::AndIOp> {
                                 PatternRewriter &rewriter) const override {
     auto lhs = op.getLhs().getDefiningOp<vector::CreateMaskOp>();
     auto rhs = op.getRhs().getDefiningOp<vector::CreateMaskOp>();
-    if (!lhs || !rhs || lhs.getType() != rhs.getType())
+    if (!lhs || !rhs)
       return failure();
     SmallVector<Value> bounds;
     for (auto [a, b] : llvm::zip_equal(lhs.getOperands(), rhs.getOperands()))
@@ -2410,7 +2410,7 @@ void mlir::vector::populateFoldArithExtensionPatterns(
 
 void mlir::vector::populateVectorMaskMaterializationPatterns(
     RewritePatternSet &patterns, bool force32BitVectorIndices,
-    PatternBenefit benefit, bool lowerCreateMask) {
+    bool lowerCreateMask, PatternBenefit benefit) {
   patterns.add<MaterializeTransferMask<vector::TransferReadOp>,
                MaterializeTransferMask<vector::TransferWriteOp>>(
       patterns.getContext(), force32BitVectorIndices, benefit);

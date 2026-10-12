@@ -393,8 +393,8 @@ void populateBubbleVectorBitCastOpPatterns(RewritePatternSet &patterns,
 /// emulation can still read the mask bounds.
 void populateVectorMaskMaterializationPatterns(RewritePatternSet &patterns,
                                                bool force32BitVectorIndices,
-                                               PatternBenefit benefit = 1,
-                                               bool lowerCreateMask = true);
+                                               bool lowerCreateMask = true,
+                                               PatternBenefit benefit = 1);
 
 /// Rewrites `arith.andi` of two `vector.create_mask` ops of the same type into
 /// one `vector.create_mask` of the per-dimension `arith.minsi` of the bounds.
