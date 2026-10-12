@@ -861,20 +861,22 @@ struct ExtSIPattern final : public OpConversionPattern<arith::ExtSIOp> {
           getElementTypeOrSelf(op.getIn().getType()).getIntOrFloatBitWidth();
       unsigned dstBW =
           getElementTypeOrSelf(op.getType()).getIntOrFloatBitWidth();
-      assert(srcBW < dstBW);
-      Value shiftSize = getScalarOrVectorConstInt(dstType, dstBW - srcBW,
+      unsigned emulatedBW =
+          getElementTypeOrSelf(dstType).getIntOrFloatBitWidth();
+      assert(srcBW < dstBW && dstBW <= emulatedBW);
+      Value shiftSize = getScalarOrVectorConstInt(dstType, emulatedBW - srcBW,
                                                   rewriter, op.getLoc());
       if (!shiftSize)
         return rewriter.notifyMatchFailure(op, "unsupported type for shift");
 
-      // First shift left to sequeeze out all leading bits beyond the original
-      // bitwidth. Here we need to use the original source and result type's
-      // bitwidth.
+      // First shift left to move the source sign bit into the sign bit of the
+      // emulating type.
       auto shiftLOp = spirv::ShiftLeftLogicalOp::create(
           rewriter, op.getLoc(), dstType, adaptor.getIn(), shiftSize);
 
       // Then we perform arithmetic right shift to make sure we have the right
-      // sign bits for negative values.
+      // sign bits for negative values. The result stays sign-extended to the
+      // emulating width, as emulated loads and constants are.
       rewriter.replaceOpWithNewOp<spirv::ShiftRightArithmeticOp>(
           op, dstType, shiftLOp, shiftSize);
     } else {
