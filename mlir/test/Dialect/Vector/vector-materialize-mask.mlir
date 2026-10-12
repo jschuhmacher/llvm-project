@@ -42,12 +42,12 @@ module attributes {transform.with_named_sequence} {
 
 // CHECK-LABEL: func @masked_write_keeps_create_mask
 // CHECK-SAME:    %[[BUF:.*]]: memref<32xi4>, %[[V:.*]]: vector<8xi4>, %[[I:.*]]: index, %[[N:.*]]: index
+// CHECK-NOT:     arith.cmpi
+// CHECK-NOT:     arith.andi
 // CHECK:         %[[REST:.*]] = arith.subi %{{.*}}, %[[I]] : index
 // CHECK:         %[[BOUND:.*]] = arith.minsi %[[REST]], %[[N]] : index
 // CHECK:         %[[MASK:.*]] = vector.create_mask %[[BOUND]] : vector<8xi1>
 // CHECK:         vector.transfer_write %[[V]], %[[BUF]][%[[I]]], %[[MASK]] {in_bounds = [true]}
-// CHECK-NOT:     arith.cmpi
-// CHECK-NOT:     arith.andi
 
 // -----
 
