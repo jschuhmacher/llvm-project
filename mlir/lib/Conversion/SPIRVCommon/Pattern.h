@@ -11,6 +11,7 @@
 
 #include "mlir/Dialect/SPIRV/IR/SPIRVEnums.h"
 #include "mlir/Dialect/SPIRV/IR/SPIRVOpTraits.h"
+#include "mlir/Dialect/SPIRV/IR/SPIRVOps.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -35,15 +36,41 @@ struct ElementwiseOpPattern : public OpConversionPattern<Op> {
           llvm::formatv("failed to convert type {0} for SPIR-V", op.getType()));
     }
 
-    if (SPIRVOp::template hasTrait<OpTrait::spirv::UnsignedOp>() &&
-        !getElementTypeOrSelf(op.getType()).isIndex() &&
-        dstType != op.getType()) {
-      op.dump();
+    SmallVector<Value> operands(adaptor.getOperands());
+    // Emulated narrow integers may carry any upper bits; unsigned operations
+    // and logical right shifts must read only the source width.
+    constexpr bool readsUnsigned =
+        SPIRVOp::template hasTrait<OpTrait::spirv::UnsignedOp>() ||
+        std::is_same_v<SPIRVOp, spirv::ShiftRightLogicalOp>;
+    Type srcElementType = getElementTypeOrSelf(op.getType());
+    auto srcIntType = dyn_cast<IntegerType>(srcElementType);
+    auto dstIntType = dyn_cast<IntegerType>(getElementTypeOrSelf(dstType));
+    if (readsUnsigned && !srcElementType.isIndex() && dstType != op.getType() &&
+        (!srcIntType || !dstIntType ||
+         srcIntType.getWidth() > dstIntType.getWidth())) {
       return op.emitError("bitwidth emulation is not implemented yet on "
                           "unsigned op pattern version");
     }
-    rewriter.template replaceOpWithNewOp<SPIRVOp>(op, dstType,
-                                                  adaptor.getOperands());
+    if (readsUnsigned && srcIntType && dstIntType &&
+        srcIntType.getWidth() < dstIntType.getWidth()) {
+      TypedAttr maskAttr = IntegerAttr::get(
+          dstIntType,
+          APInt::getLowBitsSet(dstIntType.getWidth(), srcIntType.getWidth()));
+      if (auto vectorType = dyn_cast<VectorType>(dstType))
+        maskAttr = SplatElementsAttr::get(vectorType, maskAttr);
+      Value mask =
+          spirv::ConstantOp::create(rewriter, op.getLoc(), dstType, maskAttr);
+      // A logical shift reads its shift amount whole.
+      size_t maskedOperands =
+          std::is_same_v<SPIRVOp, spirv::ShiftRightLogicalOp> ? 1
+                                                              : operands.size();
+      for (Value &operand :
+           MutableArrayRef(operands).take_front(maskedOperands)) {
+        operand = spirv::BitwiseAndOp::create(rewriter, op.getLoc(), dstType,
+                                              operand, mask);
+      }
+    }
+    rewriter.template replaceOpWithNewOp<SPIRVOp>(op, dstType, operands);
     return success();
   }
 };
