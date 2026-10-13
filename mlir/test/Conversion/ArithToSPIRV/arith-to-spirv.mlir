@@ -1710,6 +1710,31 @@ func.func @cmpi_vec_i16_emulated(%arg0: vector<4xi16>, %arg1: vector<4xi16>) -> 
   return %0 : vector<4xi1>
 }
 
+// Unsigned operations and logical right shifts read only the source width.
+// CHECK-LABEL: @unsigned_ops_i8_emulated
+func.func @unsigned_ops_i8_emulated(%arg0: i8, %arg1: i8) -> (i8, i8) {
+  // CHECK: %[[MASK:.+]] = spirv.Constant 255 : i32
+  // CHECK: %[[LHS:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : i32
+  // CHECK: %[[RHS:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : i32
+  // CHECK: spirv.UDiv %[[LHS]], %[[RHS]] : i32
+  %0 = arith.divui %arg0, %arg1 : i8
+  // CHECK: %[[SHIFTED_MASK:.+]] = spirv.Constant 255 : i32
+  // CHECK: %[[VALUE:.+]] = spirv.BitwiseAnd %{{.*}}, %[[SHIFTED_MASK]] : i32
+  // CHECK: spirv.ShiftRightLogical %[[VALUE]], %{{.*}} : i32, i32
+  %1 = arith.shrui %arg0, %arg1 : i8
+  return %0, %1 : i8, i8
+}
+
+// CHECK-LABEL: @remui_vec_i16_emulated
+func.func @remui_vec_i16_emulated(%arg0: vector<3xi16>, %arg1: vector<3xi16>) -> vector<3xi16> {
+  // CHECK: %[[MASK:.+]] = spirv.Constant dense<65535> : vector<3xi32>
+  // CHECK: %[[LHS:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : vector<3xi32>
+  // CHECK: %[[RHS:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : vector<3xi32>
+  // CHECK: spirv.UMod %[[LHS]], %[[RHS]] : vector<3xi32>
+  %0 = arith.remui %arg0, %arg1 : vector<3xi16>
+  return %0 : vector<3xi16>
+}
+
 // CHECK-LABEL: @sitofp_i8_emulated_f32
 func.func @sitofp_i8_emulated_f32(%arg0: i8) -> f32 {
   // CHECK: %[[SHIFT:.+]] = spirv.Constant 24 : i32
