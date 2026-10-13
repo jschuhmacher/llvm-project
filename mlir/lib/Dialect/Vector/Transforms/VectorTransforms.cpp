@@ -1939,6 +1939,12 @@ struct FoldArithExtIntoContractionOp
                                          "no defining op on contract operands");
     }
 
+    if (getElementTypeOrSelf(lhsDefOp->getOperand(0).getType()) !=
+        getElementTypeOrSelf(rhsDefOp->getOperand(0).getType())) {
+      return rewriter.notifyMatchFailure(
+          contractOp, "contract operands would differ in element type");
+    }
+
     rewriter.replaceOpWithNewOp<vector::ContractionOp>(
         contractOp, lhsDefOp->getOperand(0), rhsDefOp->getOperand(0),
         contractOp.getAcc(), contractOp.getIndexingMapsAttr(),
