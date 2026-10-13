@@ -1710,6 +1710,24 @@ func.func @cmpi_vec_i16_emulated(%arg0: vector<4xi16>, %arg1: vector<4xi16>) -> 
   return %0 : vector<4xi1>
 }
 
+// Signed operations read emulated i8 values sign-extended from bit 7.
+// CHECK-LABEL: @signed_i8_emulated
+func.func @signed_i8_emulated(%arg0: i8, %arg1: i8) -> (i8, i8) {
+  // CHECK: %[[SHIFT:.+]] = spirv.Constant 24 : i32
+  // CHECK: %[[LHS_SHL:.+]] = spirv.ShiftLeftLogical %{{.*}}, %[[SHIFT]] : i32, i32
+  // CHECK: %[[LHS:.+]] = spirv.ShiftRightArithmetic %[[LHS_SHL]], %[[SHIFT]] : i32, i32
+  // CHECK: %[[RHS_SHL:.+]] = spirv.ShiftLeftLogical %{{.*}}, %[[SHIFT]] : i32, i32
+  // CHECK: %[[RHS:.+]] = spirv.ShiftRightArithmetic %[[RHS_SHL]], %[[SHIFT]] : i32, i32
+  // CHECK: spirv.SDiv %[[LHS]], %[[RHS]] : i32
+  %0 = arith.divsi %arg0, %arg1 : i8
+  // The shift amount is read whole.
+  // CHECK: spirv.ShiftLeftLogical
+  // CHECK: %[[VALUE:.+]] = spirv.ShiftRightArithmetic
+  // CHECK-NEXT: spirv.ShiftRightArithmetic %[[VALUE]], %{{.*}} : i32, i32
+  %1 = arith.shrsi %arg0, %arg1 : i8
+  return %0, %1 : i8, i8
+}
+
 // Unsigned operations and logical right shifts read only the source width.
 // CHECK-LABEL: @unsigned_ops_i8_emulated
 func.func @unsigned_ops_i8_emulated(%arg0: i8, %arg1: i8) -> (i8, i8) {
