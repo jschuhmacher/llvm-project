@@ -688,12 +688,18 @@ struct ConvertShLI final : OpConversionPattern<arith::ShLIOp> {
     Value resElem0 = arith::SelectOp::create(rewriter, loc, illegalElemShift,
                                              zeroCst, shiftedElem0);
 
+    // Shift by one and then by (newBitWidth - 1 - RHS): a single shift by
+    // newBitWidth - RHS would be out of range when RHS is 0.
+    Value oneCst = createScalarOrSplatConstant(rewriter, loc, newOperandTy, 1);
+    Value maxElemShift = createScalarOrSplatConstant(
+        rewriter, loc, newOperandTy, newBitWidth - 1);
     Value cappedShiftAmount = arith::SelectOp::create(
-        rewriter, loc, illegalElemShift, elemBitWidth, rhsElem0);
+        rewriter, loc, illegalElemShift, maxElemShift, rhsElem0);
     Value rightShiftAmount =
-        arith::SubIOp::create(rewriter, loc, elemBitWidth, cappedShiftAmount);
-    Value shiftedRight =
-        arith::ShRUIOp::create(rewriter, loc, lhsElem0, rightShiftAmount);
+        arith::SubIOp::create(rewriter, loc, maxElemShift, cappedShiftAmount);
+    Value shiftedRight = arith::ShRUIOp::create(
+        rewriter, loc, arith::ShRUIOp::create(rewriter, loc, lhsElem0, oneCst),
+        rightShiftAmount);
     Value overshotShiftAmount =
         arith::SubIOp::create(rewriter, loc, rhsElem0, elemBitWidth);
     Value shiftedLeft =
@@ -781,12 +787,18 @@ struct ConvertShRUI final : OpConversionPattern<arith::ShRUIOp> {
     Value resElem1 = arith::SelectOp::create(rewriter, loc, illegalElemShift,
                                              zeroCst, shiftedElem1);
 
+    // Shift by one and then by (newBitWidth - 1 - RHS): a single shift by
+    // newBitWidth - RHS would be out of range when RHS is 0.
+    Value oneCst = createScalarOrSplatConstant(rewriter, loc, newOperandTy, 1);
+    Value maxElemShift = createScalarOrSplatConstant(
+        rewriter, loc, newOperandTy, newBitWidth - 1);
     Value cappedShiftAmount = arith::SelectOp::create(
-        rewriter, loc, illegalElemShift, elemBitWidth, rhsElem0);
+        rewriter, loc, illegalElemShift, maxElemShift, rhsElem0);
     Value leftShiftAmount =
-        arith::SubIOp::create(rewriter, loc, elemBitWidth, cappedShiftAmount);
-    Value shiftedLeft =
-        arith::ShLIOp::create(rewriter, loc, lhsElem1, leftShiftAmount);
+        arith::SubIOp::create(rewriter, loc, maxElemShift, cappedShiftAmount);
+    Value shiftedLeft = arith::ShLIOp::create(
+        rewriter, loc, arith::ShLIOp::create(rewriter, loc, lhsElem1, oneCst),
+        leftShiftAmount);
     Value overshotShiftAmount =
         arith::SubIOp::create(rewriter, loc, rhsElem0, elemBitWidth);
     Value shiftedRight =
