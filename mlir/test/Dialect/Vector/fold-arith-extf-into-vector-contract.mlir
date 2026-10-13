@@ -70,3 +70,27 @@ func.func @fold_arith_extsi_into_contract(
       %lhs_i32, %rhs_i32, %arg2 : vector<64x64xi32>, vector<64x64xi32> into vector<64x64xi32>
     return %result : vector<64x64xi32>
 }
+
+// -----
+
+// The contraction requires one element type for both operands.
+
+// CHECK-LABEL: func.func @no_fold_mixed_source_types
+//  CHECK-SAME: (%[[ARG0:.*]]: vector<4x8xf8E4M3FN>, %[[ARG1:.*]]: vector<8x6xf8E5M2>, %[[ARG2:.*]]: vector<4x6xf32>)
+//       CHECK:   %[[LHS:.+]] = arith.extf %[[ARG0]]
+//       CHECK:   %[[RHS:.+]] = arith.extf %[[ARG1]]
+//       CHECK:   vector.contract
+//  CHECK-SAME:   %[[LHS]], %[[RHS]], %[[ARG2]] : vector<4x8xf32>, vector<8x6xf32> into vector<4x6xf32>
+func.func @no_fold_mixed_source_types(
+  %arg0: vector<4x8xf8E4M3FN>,
+  %arg1: vector<8x6xf8E5M2>,
+  %arg2: vector<4x6xf32>) -> vector<4x6xf32> {
+    %lhs_f32 = arith.extf %arg0 : vector<4x8xf8E4M3FN> to vector<4x8xf32>
+    %rhs_f32 = arith.extf %arg1 : vector<8x6xf8E5M2> to vector<8x6xf32>
+    %result = vector.contract {
+      indexing_maps = [affine_map<(d0, d1, d2) -> (d0, d2)>, affine_map<(d0, d1, d2) -> (d2, d1)>, affine_map<(d0, d1, d2) -> (d0, d1)>],
+      iterator_types = ["parallel", "parallel", "reduction"],
+      kind = #vector.kind<add>}
+      %lhs_f32, %rhs_f32, %arg2 : vector<4x8xf32>, vector<8x6xf32> into vector<4x6xf32>
+    return %result : vector<4x6xf32>
+}
