@@ -1142,17 +1142,47 @@ public:
     if (!dstType)
       return getTypeConversionFailure(rewriter, op, srcType);
 
+    Value lhs = adaptor.getLhs();
+    Value rhs = adaptor.getRhs();
+    // Emulated narrow integers may carry any upper bits: signed predicates
+    // sign-extend from the source width, the others zero-extend.
+    if (!getElementTypeOrSelf(srcType).isIndex() && srcType != dstType &&
+        !hasSameBitwidth(srcType, dstType)) {
+      unsigned bitwidth = getElementTypeOrSelf(srcType).getIntOrFloatBitWidth();
+      unsigned dstBitwidth =
+          getElementTypeOrSelf(dstType).getIntOrFloatBitWidth();
+      Location loc = op.getLoc();
+      arith::CmpIPredicate predicate = op.getPredicate();
+      if (predicate == arith::CmpIPredicate::slt ||
+          predicate == arith::CmpIPredicate::sle ||
+          predicate == arith::CmpIPredicate::sgt ||
+          predicate == arith::CmpIPredicate::sge) {
+        Value shift = getScalarOrVectorConstInt(dstType, dstBitwidth - bitwidth,
+                                                rewriter, loc);
+        if (!shift)
+          return rewriter.notifyMatchFailure(op, "unsupported type for shift");
+        auto signExtend = [&](Value value) -> Value {
+          Value shifted = spirv::ShiftLeftLogicalOp::create(
+              rewriter, loc, dstType, value, shift);
+          return spirv::ShiftRightArithmeticOp::create(rewriter, loc, dstType,
+                                                       shifted, shift);
+        };
+        lhs = signExtend(lhs);
+        rhs = signExtend(rhs);
+      } else {
+        Value mask = getScalarOrVectorConstInt(
+            dstType, llvm::maskTrailingOnes<uint64_t>(bitwidth), rewriter, loc);
+        if (!mask)
+          return rewriter.notifyMatchFailure(op, "unsupported type for mask");
+        lhs = spirv::BitwiseAndOp::create(rewriter, loc, dstType, lhs, mask);
+        rhs = spirv::BitwiseAndOp::create(rewriter, loc, dstType, rhs, mask);
+      }
+    }
+
     switch (op.getPredicate()) {
 #define DISPATCH(cmpPredicate, spirvOp)                                        \
   case cmpPredicate:                                                           \
-    if (spirvOp::template hasTrait<OpTrait::spirv::UnsignedOp>() &&            \
-        !getElementTypeOrSelf(srcType).isIndex() && srcType != dstType &&      \
-        !hasSameBitwidth(srcType, dstType)) {                                  \
-      return op.emitError(                                                     \
-          "bitwidth emulation is not implemented yet on unsigned op");         \
-    }                                                                          \
-    rewriter.replaceOpWithNewOp<spirvOp>(op, adaptor.getLhs(),                 \
-                                         adaptor.getRhs());                    \
+    rewriter.replaceOpWithNewOp<spirvOp>(op, lhs, rhs);                        \
     return success();
 
       DISPATCH(arith::CmpIPredicate::eq, spirv::IEqualOp);
