@@ -14715,7 +14715,7 @@ SDValue SITargetLowering::performFCopySignCombine(SDNode *N,
       NewElts.push_back(NewElt);
     }
 
-    if (NewElts.size() == 1)
+    if (!MagVT.isVector())
       return NewElts[0];
 
     return DAG.getNode(ISD::BUILD_VECTOR, DL, MagVT, NewElts);
