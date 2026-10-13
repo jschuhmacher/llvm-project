@@ -41,7 +41,8 @@ struct ElementwiseOpPattern : public OpConversionPattern<Op> {
     // and logical right shifts must read only the source width.
     constexpr bool readsUnsigned =
         SPIRVOp::template hasTrait<OpTrait::spirv::UnsignedOp>() ||
-        std::is_same_v<SPIRVOp, spirv::ShiftRightLogicalOp>;
+        std::is_same_v<SPIRVOp, spirv::ShiftRightLogicalOp> ||
+        std::is_same_v<SPIRVOp, spirv::BitCountOp>;
     Type srcElementType = getElementTypeOrSelf(op.getType());
     auto srcIntType = dyn_cast<IntegerType>(srcElementType);
     auto dstIntType = dyn_cast<IntegerType>(getElementTypeOrSelf(dstType));

@@ -48,6 +48,20 @@ static Value getScalarOrVectorI32Constant(Type type, int value,
   return nullptr;
 }
 
+/// Returns |value|, an emulated narrow integer of |op|'s source type, with
+/// the bits above the source width cleared; |value| itself otherwise.
+static Value maskToSourceWidth(Operation *op, Value value, Type type,
+                               ConversionPatternRewriter &rewriter) {
+  unsigned sourceWidth =
+      getElementTypeOrSelf(op->getResult(0).getType()).getIntOrFloatBitWidth();
+  if (sourceWidth >= getElementTypeOrSelf(type).getIntOrFloatBitWidth())
+    return value;
+  Value mask = getScalarOrVectorI32Constant(
+      type, static_cast<int>(llvm::maskTrailingOnes<uint32_t>(sourceWidth)),
+      rewriter, op->getLoc());
+  return spirv::BitwiseAndOp::create(rewriter, op->getLoc(), type, value, mask);
+}
+
 /// Check if the type is supported by math-to-spirv conversion. We expect to
 /// only see scalars and vectors at this point, with higher-level types already
 /// lowered.
@@ -225,7 +239,8 @@ struct CountLeadingZerosPattern final
       return failure();
 
     Location loc = countOp.getLoc();
-    Value input = adaptor.getOperand();
+    Value input =
+        maskToSourceWidth(countOp, adaptor.getOperand(), type, rewriter);
     Value val1 = getScalarOrVectorI32Constant(type, 1, rewriter, loc);
     Value val31 = getScalarOrVectorI32Constant(type, 31, rewriter, loc);
     Value val32 = getScalarOrVectorI32Constant(type, 32, rewriter, loc);
@@ -242,8 +257,16 @@ struct CountLeadingZerosPattern final
     // input is either zero or one.
     Value subInput = spirv::ISubOp::create(rewriter, loc, val32, input);
     Value cmp = spirv::ULessThanEqualOp::create(rewriter, loc, input, val1);
-    rewriter.replaceOpWithNewOp<spirv::SelectOp>(countOp, cmp, subInput,
-                                                 subMsb);
+    Value count = spirv::SelectOp::create(rewriter, loc, cmp, subInput, subMsb);
+    // An emulated narrow integer has 32 minus its width more leading zeros.
+    unsigned sourceWidth =
+        getElementTypeOrSelf(countOp.getType()).getIntOrFloatBitWidth();
+    if (sourceWidth < bitwidth) {
+      Value extra = getScalarOrVectorI32Constant(type, bitwidth - sourceWidth,
+                                                 rewriter, loc);
+      count = spirv::ISubOp::create(rewriter, loc, count, extra);
+    }
+    rewriter.replaceOp(countOp, count);
     return success();
   }
 };
@@ -276,7 +299,12 @@ struct CountTrailingZerosPattern final
       bitwidth = vectorType.getElementTypeBitWidth();
 
     Location loc = countOp.getLoc();
-    Value input = adaptor.getOperand();
+    Value input =
+        maskToSourceWidth(countOp, adaptor.getOperand(), type, rewriter);
+    // A zero emulated narrow integer has as many trailing zeros as its width.
+    bitwidth = std::min(
+        bitwidth,
+        getElementTypeOrSelf(countOp.getType()).getIntOrFloatBitWidth());
     Value val0 = spirv::ConstantOp::getZero(type, loc, rewriter);
     Type elemType = getElementTypeOrSelf(type);
     Attribute bwAttr = IntegerAttr::get(elemType, bitwidth);
