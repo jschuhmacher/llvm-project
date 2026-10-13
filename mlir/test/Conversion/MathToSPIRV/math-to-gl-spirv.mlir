@@ -216,6 +216,40 @@ func.func @ctlz_vector2(%val: vector<2xi32>) -> vector<2xi32> {
   return %0 : vector<2xi32>
 }
 
+// Without Int8 or Int16 these count bits of the source width only.
+// CHECK-LABEL: @ctlz_i8_emulated
+func.func @ctlz_i8_emulated(%val: i8) -> i8 {
+  // CHECK: %[[MASK:.+]] = spirv.Constant 255 : i32
+  // CHECK: %[[LOW:.+]] = spirv.BitwiseAnd %{{.+}}, %[[MASK]] : i32
+  // CHECK: spirv.GL.FindUMsb %[[LOW]] : i32
+  // CHECK: %[[COUNT32:.+]] = spirv.Select
+  // CHECK: %[[EXTRA:.+]] = spirv.Constant 24 : i32
+  // CHECK: spirv.ISub %[[COUNT32]], %[[EXTRA]] : i32
+  %0 = math.ctlz %val : i8
+  return %0 : i8
+}
+
+// CHECK-LABEL: @cttz_i8_emulated
+func.func @cttz_i8_emulated(%val: i8) -> i8 {
+  // CHECK: %[[MASK:.+]] = spirv.Constant 255 : i32
+  // CHECK: %[[LOW:.+]] = spirv.BitwiseAnd %{{.+}}, %[[MASK]] : i32
+  // CHECK: %[[WIDTH:.+]] = spirv.Constant 8 : i32
+  // CHECK: %[[LSB:.+]] = spirv.GL.FindILsb %[[LOW]] : i32
+  // CHECK: %[[ZERO:.+]] = spirv.IEqual %[[LOW]], %{{.+}} : i32
+  // CHECK: spirv.Select %[[ZERO]], %[[WIDTH]], %[[LSB]] : i1, i32
+  %0 = math.cttz %val : i8
+  return %0 : i8
+}
+
+// CHECK-LABEL: @ctpop_vec_i16_emulated
+func.func @ctpop_vec_i16_emulated(%val: vector<3xi16>) -> vector<3xi16> {
+  // CHECK: %[[MASK:.+]] = spirv.Constant dense<65535> : vector<3xi32>
+  // CHECK: %[[LOW:.+]] = spirv.BitwiseAnd %{{.+}}, %[[MASK]] : vector<3xi32>
+  // CHECK: spirv.BitCount %[[LOW]] : vector<3xi32>
+  %0 = math.ctpop %val : vector<3xi16>
+  return %0 : vector<3xi16>
+}
+
 // CHECK-LABEL: @cttz_scalar
 //  CHECK-SAME: (%[[VAL:.+]]: i32)
 func.func @cttz_scalar(%val: i32) -> i32 {
