@@ -1677,6 +1677,39 @@ func.func @uitofp_vec_i8_emulated_f32(%arg0: vector<4xi8>) -> vector<4xf32> {
   return %0 : vector<4xf32>
 }
 
+// Emulated i8 and i16 values may carry any upper bits, so comparisons first
+// zero-extend or sign-extend from the source width.
+// CHECK-LABEL: @cmpi_i8_emulated
+func.func @cmpi_i8_emulated(%arg0: i8, %arg1: i8) -> (i1, i1, i1) {
+  // CHECK: %[[MASK:.+]] = spirv.Constant 255 : i32
+  // CHECK: %[[LHS_LOW:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : i32
+  // CHECK: %[[RHS_LOW:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : i32
+  // CHECK: spirv.ULessThan %[[LHS_LOW]], %[[RHS_LOW]] : i32
+  %0 = arith.cmpi ult, %arg0, %arg1 : i8
+  // CHECK: %[[SHIFT:.+]] = spirv.Constant 24 : i32
+  // CHECK: %[[LHS_SHL:.+]] = spirv.ShiftLeftLogical %{{.*}}, %[[SHIFT]] : i32, i32
+  // CHECK: %[[LHS_EXT:.+]] = spirv.ShiftRightArithmetic %[[LHS_SHL]], %[[SHIFT]] : i32, i32
+  // CHECK: %[[RHS_SHL:.+]] = spirv.ShiftLeftLogical %{{.*}}, %[[SHIFT]] : i32, i32
+  // CHECK: %[[RHS_EXT:.+]] = spirv.ShiftRightArithmetic %[[RHS_SHL]], %[[SHIFT]] : i32, i32
+  // CHECK: spirv.SLessThan %[[LHS_EXT]], %[[RHS_EXT]] : i32
+  %1 = arith.cmpi slt, %arg0, %arg1 : i8
+  // CHECK: spirv.BitwiseAnd
+  // CHECK: spirv.BitwiseAnd
+  // CHECK: spirv.IEqual
+  %2 = arith.cmpi eq, %arg0, %arg1 : i8
+  return %0, %1, %2 : i1, i1, i1
+}
+
+// CHECK-LABEL: @cmpi_vec_i16_emulated
+func.func @cmpi_vec_i16_emulated(%arg0: vector<4xi16>, %arg1: vector<4xi16>) -> vector<4xi1> {
+  // CHECK: %[[MASK:.+]] = spirv.Constant dense<65535> : vector<4xi32>
+  // CHECK: %[[LHS_LOW:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : vector<4xi32>
+  // CHECK: %[[RHS_LOW:.+]] = spirv.BitwiseAnd %{{.*}}, %[[MASK]] : vector<4xi32>
+  // CHECK: spirv.UGreaterThanEqual %[[LHS_LOW]], %[[RHS_LOW]] : vector<4xi32>
+  %0 = arith.cmpi uge, %arg0, %arg1 : vector<4xi16>
+  return %0 : vector<4xi1>
+}
+
 // CHECK-LABEL: @sitofp_i8_emulated_f32
 func.func @sitofp_i8_emulated_f32(%arg0: i8) -> f32 {
   // CHECK: %[[SHIFT:.+]] = spirv.Constant 24 : i32
