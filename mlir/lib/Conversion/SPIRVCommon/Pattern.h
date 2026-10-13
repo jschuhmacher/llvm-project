@@ -71,6 +71,38 @@ struct ElementwiseOpPattern : public OpConversionPattern<Op> {
                                               operand, mask);
       }
     }
+    // Signed operations and arithmetic right shifts read the source width
+    // sign-extended.
+    constexpr bool readsSigned =
+        std::is_same_v<SPIRVOp, spirv::SDivOp> ||
+        std::is_same_v<SPIRVOp, spirv::SRemOp> ||
+        std::is_same_v<SPIRVOp, spirv::SModOp> ||
+        std::is_same_v<SPIRVOp, spirv::ShiftRightArithmeticOp> ||
+        std::is_same_v<SPIRVOp, spirv::GLSMinOp> ||
+        std::is_same_v<SPIRVOp, spirv::GLSMaxOp> ||
+        std::is_same_v<SPIRVOp, spirv::CLSMinOp> ||
+        std::is_same_v<SPIRVOp, spirv::CLSMaxOp>;
+    if (readsSigned && srcIntType && dstIntType &&
+        srcIntType.getWidth() < dstIntType.getWidth()) {
+      TypedAttr shiftAttr = IntegerAttr::get(
+          dstIntType, dstIntType.getWidth() - srcIntType.getWidth());
+      if (auto vectorType = dyn_cast<VectorType>(dstType))
+        shiftAttr = SplatElementsAttr::get(vectorType, shiftAttr);
+      Value shift =
+          spirv::ConstantOp::create(rewriter, op.getLoc(), dstType, shiftAttr);
+      // An arithmetic shift reads its shift amount whole.
+      size_t extendedOperands =
+          std::is_same_v<SPIRVOp, spirv::ShiftRightArithmeticOp>
+              ? 1
+              : operands.size();
+      for (Value &operand :
+           MutableArrayRef(operands).take_front(extendedOperands)) {
+        Value shifted = spirv::ShiftLeftLogicalOp::create(
+            rewriter, op.getLoc(), dstType, operand, shift);
+        operand = spirv::ShiftRightArithmeticOp::create(
+            rewriter, op.getLoc(), dstType, shifted, shift);
+      }
+    }
     rewriter.template replaceOpWithNewOp<SPIRVOp>(op, dstType, operands);
     return success();
   }
